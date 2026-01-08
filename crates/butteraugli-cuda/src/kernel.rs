@@ -12,9 +12,13 @@ pub struct Kernel {
     // Color conversion
     srgb_to_linear: CuFunction,
     opsin_dynamics: CuFunction,
+    linear_to_xyb: CuFunction,
+    linear_to_xyb_planar: CuFunction,
+    deinterleave_3ch: CuFunction,
     // Blur
     horizontal_blur: CuFunction,
     vertical_blur: CuFunction,
+    tiled_blur: CuFunction,
     // Downscale
     downsample_2x: CuFunction,
     add_upsample_2x: CuFunction,
@@ -37,6 +41,7 @@ pub struct Kernel {
     compute_diffmap: CuFunction,
     l2_diff: CuFunction,
     l2_asym_diff: CuFunction,
+    power_elements: CuFunction,
 }
 
 impl Kernel {
@@ -55,12 +60,24 @@ impl Kernel {
             opsin_dynamics: module
                 .function_by_name("opsin_dynamics_kernel")
                 .expect("opsin_dynamics_kernel not found"),
+            linear_to_xyb: module
+                .function_by_name("linear_to_xyb_kernel")
+                .expect("linear_to_xyb_kernel not found"),
+            linear_to_xyb_planar: module
+                .function_by_name("linear_to_xyb_planar_kernel")
+                .expect("linear_to_xyb_planar_kernel not found"),
+            deinterleave_3ch: module
+                .function_by_name("deinterleave_3ch_kernel")
+                .expect("deinterleave_3ch_kernel not found"),
             horizontal_blur: module
                 .function_by_name("horizontal_blur_kernel")
                 .expect("horizontal_blur_kernel not found"),
             vertical_blur: module
                 .function_by_name("vertical_blur_kernel")
                 .expect("vertical_blur_kernel not found"),
+            tiled_blur: module
+                .function_by_name("tiled_blur_kernel")
+                .expect("tiled_blur_kernel not found"),
             downsample_2x: module
                 .function_by_name("downsample_2x_kernel")
                 .expect("downsample_2x_kernel not found"),
@@ -112,6 +129,9 @@ impl Kernel {
             l2_asym_diff: module
                 .function_by_name("l2_asym_diff_kernel")
                 .expect("l2_asym_diff_kernel not found"),
+            power_elements: module
+                .function_by_name("power_elements_kernel")
+                .expect("power_elements_kernel not found"),
             _module: module,
         }
     }
@@ -178,7 +198,7 @@ impl Kernel {
         }
     }
 
-    /// Apply opsin dynamics transformation (linear RGB -> XYB)
+    /// Apply opsin dynamics transformation (linear RGB -> XYB with adaptation)
     pub fn opsin_dynamics(
         &self,
         stream: &CuStream,
@@ -211,6 +231,167 @@ impl Kernel {
                 )
                 .expect("opsin_dynamics launch failed");
         }
+    }
+
+    /// Simple linear RGB to XYB (without opsin dynamics)
+    pub fn linear_to_xyb(
+        &self,
+        stream: &CuStream,
+        src: impl Img<f32, C<3>>,
+        mut dst: impl ImgMut<f32, C<3>>,
+    ) {
+        debug_assert_same_size!(src, dst);
+        unsafe {
+            self.linear_to_xyb
+                .launch(
+                    &Self::launch_config_2d(src.width(), src.height()),
+                    stream,
+                    kernel_params!(
+                        src.device_ptr(),
+                        src.pitch() as usize,
+                        dst.device_ptr_mut(),
+                        dst.pitch() as usize,
+                        src.width() as usize,
+                        src.height() as usize,
+                    ),
+                )
+                .expect("linear_to_xyb launch failed");
+        }
+    }
+
+    /// Convert interleaved linear RGB to planar XYB
+    pub fn linear_to_xyb_planar(
+        &self,
+        stream: &CuStream,
+        src: impl Img<f32, C<3>>,
+        dst_x: *mut f32,
+        dst_y: *mut f32,
+        dst_b: *mut f32,
+    ) {
+        unsafe {
+            self.linear_to_xyb_planar
+                .launch(
+                    &Self::launch_config_2d(src.width(), src.height()),
+                    stream,
+                    kernel_params!(
+                        src.device_ptr(),
+                        src.pitch() as usize,
+                        dst_x,
+                        dst_y,
+                        dst_b,
+                        src.width() as usize,
+                        src.height() as usize,
+                    ),
+                )
+                .expect("linear_to_xyb_planar launch failed");
+        }
+    }
+
+    /// Deinterleave 3-channel image to planar format
+    pub fn deinterleave_3ch(
+        &self,
+        stream: &CuStream,
+        src: impl Img<f32, C<3>>,
+        dst0: *mut f32,
+        dst1: *mut f32,
+        dst2: *mut f32,
+    ) {
+        unsafe {
+            self.deinterleave_3ch
+                .launch(
+                    &Self::launch_config_2d(src.width(), src.height()),
+                    stream,
+                    kernel_params!(
+                        src.device_ptr(),
+                        src.pitch() as usize,
+                        dst0,
+                        dst1,
+                        dst2,
+                        src.width() as usize,
+                        src.height() as usize,
+                    ),
+                )
+                .expect("deinterleave_3ch launch failed");
+        }
+    }
+
+    /// Horizontal blur pass
+    pub fn horizontal_blur(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        width: usize,
+        height: usize,
+        sigma: f32,
+    ) {
+        unsafe {
+            self.horizontal_blur
+                .launch(
+                    &Self::launch_config_1d(width * height),
+                    stream,
+                    kernel_params!(src, dst, width, height, sigma,),
+                )
+                .expect("horizontal_blur launch failed");
+        }
+    }
+
+    /// Vertical blur pass
+    pub fn vertical_blur(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        width: usize,
+        height: usize,
+        sigma: f32,
+    ) {
+        unsafe {
+            self.vertical_blur
+                .launch(
+                    &Self::launch_config_1d(width * height),
+                    stream,
+                    kernel_params!(src, dst, width, height, sigma,),
+                )
+                .expect("vertical_blur launch failed");
+        }
+    }
+
+    /// Tiled blur (small kernel, in shared memory)
+    pub fn tiled_blur(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        width: usize,
+        height: usize,
+    ) {
+        unsafe {
+            self.tiled_blur
+                .launch(
+                    &Self::launch_config_2d(width as u32, height as u32),
+                    stream,
+                    kernel_params!(src, dst, width, height,),
+                )
+                .expect("tiled_blur launch failed");
+        }
+    }
+
+    /// Two-pass separable Gaussian blur
+    pub fn blur(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        temp: *mut f32,
+        width: usize,
+        height: usize,
+        sigma: f32,
+    ) {
+        // Horizontal pass: src -> temp
+        self.horizontal_blur(stream, src, temp, width, height, sigma);
+        // Vertical pass: temp -> dst
+        self.vertical_blur(stream, temp, dst, width, height, sigma);
     }
 
     /// Malta difference map (high frequency)
@@ -261,7 +442,7 @@ impl Kernel {
         }
     }
 
-    /// Compute final diffmap
+    /// Compute final diffmap from masked AC and DC differences
     pub fn compute_diffmap(
         &self,
         stream: &CuStream,
@@ -286,7 +467,7 @@ impl Kernel {
         }
     }
 
-    /// L2 difference
+    /// L2 difference (symmetric)
     pub fn l2_diff(
         &self,
         stream: &CuStream,
@@ -304,6 +485,28 @@ impl Kernel {
                     kernel_params!(src1, src2, dst, size, weight,),
                 )
                 .expect("l2_diff launch failed");
+        }
+    }
+
+    /// L2 asymmetric difference
+    pub fn l2_asym_diff(
+        &self,
+        stream: &CuStream,
+        src1: *const f32,
+        src2: *const f32,
+        dst: *mut f32,
+        size: usize,
+        weight_gt: f32,
+        weight_lt: f32,
+    ) {
+        unsafe {
+            self.l2_asym_diff
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(src1, src2, dst, size, weight_gt, weight_lt,),
+                )
+                .expect("l2_asym_diff launch failed");
         }
     }
 
@@ -326,6 +529,203 @@ impl Kernel {
                     kernel_params!(src, dst, src_width, src_height, dst_width, dst_height,),
                 )
                 .expect("downsample_2x launch failed");
+        }
+    }
+
+    /// Add upsampled image to destination
+    pub fn add_upsample_2x(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        src_width: usize,
+        src_height: usize,
+        dst_width: usize,
+        dst_height: usize,
+    ) {
+        unsafe {
+            self.add_upsample_2x
+                .launch(
+                    &Self::launch_config_2d(dst_width as u32, dst_height as u32),
+                    stream,
+                    kernel_params!(src, dst, src_width, src_height, dst_width, dst_height,),
+                )
+                .expect("add_upsample_2x launch failed");
+        }
+    }
+
+    /// Subtract arrays: dst = src1 - src2
+    pub fn subtract_arrays(
+        &self,
+        stream: &CuStream,
+        src1: *const f32,
+        src2: *const f32,
+        dst: *mut f32,
+        size: usize,
+    ) {
+        unsafe {
+            self.subtract_arrays
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(src1, src2, dst, size,),
+                )
+                .expect("subtract_arrays launch failed");
+        }
+    }
+
+    /// Initialize XYB low-frequency values (modifies in place)
+    pub fn xyb_low_freq_to_vals(
+        &self,
+        stream: &CuStream,
+        x: *mut f32,
+        y: *mut f32,
+        b: *mut f32,
+        size: usize,
+    ) {
+        unsafe {
+            self.xyb_low_freq_to_vals
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(x, y, b, size,),
+                )
+                .expect("xyb_low_freq_to_vals launch failed");
+        }
+    }
+
+    /// Suppress X channel by Y channel
+    pub fn suppress_x_by_y(
+        &self,
+        stream: &CuStream,
+        x: *mut f32,
+        y: *const f32,
+        size: usize,
+        suppression: f32,
+    ) {
+        unsafe {
+            self.suppress_x_by_y
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(x, y, size, suppression,),
+                )
+                .expect("suppress_x_by_y launch failed");
+        }
+    }
+
+    /// Separate HF and UHF bands (modifies both in place)
+    pub fn separate_hf_uhf(
+        &self,
+        stream: &CuStream,
+        hf: *mut f32,
+        uhf: *mut f32,
+        size: usize,
+    ) {
+        unsafe {
+            self.separate_hf_uhf
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(hf, uhf, size,),
+                )
+                .expect("separate_hf_uhf launch failed");
+        }
+    }
+
+    /// Initialize masking from HF and UHF bands
+    pub fn mask_init(
+        &self,
+        stream: &CuStream,
+        hf_x: *const f32,
+        uhf_x: *const f32,
+        hf_y: *const f32,
+        uhf_y: *const f32,
+        dst: *mut f32,
+        size: usize,
+    ) {
+        unsafe {
+            self.mask_init
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(hf_x, uhf_x, hf_y, uhf_y, dst, size,),
+                )
+                .expect("mask_init launch failed");
+        }
+    }
+
+    /// Precompute diff values for masking
+    pub fn diff_precompute(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        size: usize,
+    ) {
+        unsafe {
+            self.diff_precompute
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(src, dst, size,),
+                )
+                .expect("diff_precompute launch failed");
+        }
+    }
+
+    /// Fuzzy erosion for mask refinement
+    pub fn fuzzy_erosion(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        width: usize,
+        height: usize,
+    ) {
+        unsafe {
+            self.fuzzy_erosion
+                .launch(
+                    &Self::launch_config_1d(width * height),
+                    stream,
+                    kernel_params!(src, dst, width, height,),
+                )
+                .expect("fuzzy_erosion launch failed");
+        }
+    }
+
+    /// Power elements for norm computation
+    pub fn power_elements(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        size: usize,
+        q: f32,
+    ) {
+        unsafe {
+            self.power_elements
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(src, dst, size, q,),
+                )
+                .expect("power_elements launch failed");
+        }
+    }
+
+    /// Clear buffer to zero
+    pub fn clear_buffer(&self, stream: &CuStream, dst: *mut f32, size: usize) {
+        // Use cudaMemsetAsync via driver API
+        unsafe {
+            cudarse_driver::sys::cuMemsetD32Async(
+                dst as u64,
+                0,
+                size,
+                stream.raw(),
+            )
+            .result()
+            .expect("clear_buffer failed");
         }
     }
 }

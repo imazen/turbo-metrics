@@ -1,52 +1,31 @@
 //! Gaussian blur kernels for Butteraugli
 //!
 //! Butteraugli uses multiple blur sigmas:
-//! - sigma=1.2 (index 0): used in separateFrequencies for initial blur
-//! - sigma=1.56416327805 (index 1): used for HF separation
-//! - sigma=2.7 (index 2): used for mask computation
-//! - sigma=3.22489901262 (index 3): used for MF separation
-//! - sigma=7.15593339443 (index 4): used for LF separation (main opsin dynamics blur)
-//!
-//! Window sizes (3*sigma, min 8):
-//! - sigma=1.2 -> window=8
-//! - sigma=1.56 -> window=8
-//! - sigma=2.7 -> window=8
-//! - sigma=3.22 -> window=9
-//! - sigma=7.16 -> window=21
+//! - sigma=1.2: used in separateFrequencies for initial blur
+//! - sigma=1.56416327805: used for HF separation
+//! - sigma=2.7: used for mask computation
+//! - sigma=3.22489901262: used for MF separation
+//! - sigma=7.15593339443: used for LF separation (main opsin dynamics blur)
 
-use nvptx_std::prelude::*;
+use nvptx_std::math::StdMathExt;
 
-/// Precomputed Gaussian kernel constants for sigma=1.5 (used by ssimulacra2)
-/// These are recomputed at build time for the correct sigma values.
-mod consts {
-    // For now, using ssimulacra2's sigma=1.5 coefficients
-    // TODO: Generate these at build time for all 5 butteraugli sigmas
-    pub const RADIUS: usize = 5;
-
-    pub const MUL_IN_1: f32 = -0.08333333_f32;
-    pub const MUL_IN_3: f32 = 0.08333333_f32;
-    pub const MUL_IN_5: f32 = -0.08333333_f32;
-
-    pub const MUL_PREV_1: f32 = 1.7320508_f32;
-    pub const MUL_PREV_3: f32 = -1.0_f32;
-    pub const MUL_PREV_5: f32 = -1.7320508_f32;
-
-    pub const MUL_PREV2_1: f32 = -1.0_f32;
-    pub const MUL_PREV2_3: f32 = -1.0_f32;
-    pub const MUL_PREV2_5: f32 = -1.0_f32;
+/// Compute Gaussian weight for a given distance and sigma
+#[inline]
+fn gauss(x: f32, sigma: f32) -> f32 {
+    let inv_sigma = 1.0 / sigma;
+    let x_sigma = x * inv_sigma;
+    (-0.5 * x_sigma * x_sigma).exp()
 }
 
 /// Horizontal blur pass using separable Gaussian
-/// Each thread processes one pixel
+/// Computes Gaussian weights on-the-fly from sigma
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn horizontal_blur_kernel(
     src: *const f32,
     dst: *mut f32,
     width: usize,
     height: usize,
-    kernel: *const f32,
-    kernel_integral: *const f32,
-    kernel_size: usize,
+    sigma: f32,
 ) {
     let idx = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
@@ -59,110 +38,88 @@ pub unsafe extern "ptx-kernel" fn horizontal_blur_kernel(
     let row = idx / width;
     let x = idx % width;
 
-    // Compute blur window bounds (clamp to row)
-    let begin = if x >= kernel_size {
-        x - kernel_size
-    } else {
-        0
-    };
-    let end = (x + kernel_size).min(width - 1);
+    // Window size: 3 * sigma, minimum 1
+    let radius = (sigma * 3.0) as usize;
+    let radius = if radius < 1 { 1 } else { radius };
 
-    // Compute normalization weight from kernel integral
-    let weight = *kernel_integral.add(kernel_size + end + 1 - x)
-        - *kernel_integral.add(kernel_size + begin - x);
+    // Compute bounds (clamp to row)
+    let begin = if x >= radius { x - radius } else { 0 };
+    let end = if x + radius < width { x + radius } else { width - 1 };
 
     // Accumulate weighted sum
     let mut sum = 0.0f32;
+    let mut weight_sum = 0.0f32;
+
     for i in begin..=end {
-        sum += *src.add(row * width + i) * *kernel.add(kernel_size + i - x);
+        let dist = if i >= x { i - x } else { x - i };
+        let w = gauss(dist as f32, sigma);
+        sum += *src.add(row * width + i) * w;
+        weight_sum += w;
     }
 
-    *dst.add(idx) = sum / weight;
+    *dst.add(idx) = sum / weight_sum;
 }
 
 /// Vertical blur pass using separable Gaussian
-/// 2D thread layout for better memory access patterns
+/// Computes Gaussian weights on-the-fly from sigma
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn vertical_blur_kernel(
     src: *const f32,
     dst: *mut f32,
     width: usize,
     height: usize,
-    kernel: *const f32,
-    kernel_integral: *const f32,
-    kernel_size: usize,
+    sigma: f32,
 ) {
-    let x = (core::arch::nvptx::_block_idx_x() as usize
+    let idx = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
         + core::arch::nvptx::_thread_idx_x() as usize);
-    let y = (core::arch::nvptx::_block_idx_y() as usize
-        * core::arch::nvptx::_block_dim_y() as usize
-        + core::arch::nvptx::_thread_idx_y() as usize);
 
-    if x >= width || y >= height {
+    if idx >= width * height {
         return;
     }
 
-    // Compute blur window bounds (clamp to column)
-    let begin = if y >= kernel_size {
-        y - kernel_size
-    } else {
-        0
-    };
-    let end = (y + kernel_size).min(height - 1);
+    let y = idx / width;
+    let x = idx % width;
 
-    // Compute normalization weight from kernel integral
-    let weight = *kernel_integral.add(kernel_size + end + 1 - y)
-        - *kernel_integral.add(kernel_size + begin - y);
+    // Window size: 3 * sigma, minimum 1
+    let radius = (sigma * 3.0) as usize;
+    let radius = if radius < 1 { 1 } else { radius };
+
+    // Compute bounds (clamp to column)
+    let begin = if y >= radius { y - radius } else { 0 };
+    let end = if y + radius < height { y + radius } else { height - 1 };
 
     // Accumulate weighted sum
     let mut sum = 0.0f32;
+    let mut weight_sum = 0.0f32;
+
     for i in begin..=end {
-        sum += *src.add(i * width + x) * *kernel.add(kernel_size + i - y);
+        let dist = if i >= y { i - y } else { y - i };
+        let w = gauss(dist as f32, sigma);
+        sum += *src.add(i * width + x) * w;
+        weight_sum += w;
     }
 
-    *dst.add(y * width + x) = sum / weight;
+    *dst.add(y * width + x) = sum / weight_sum;
 }
 
-/// Tiled Gaussian blur - performs both horizontal and vertical in shared memory
-/// Optimized for sigma=2.7 (window size 8)
-/// Uses 16x16 thread blocks processing 32x32 output tiles with 8-pixel borders
+/// Tiled Gaussian blur - simple fallback implementation
+/// TODO: Implement optimized shared memory version
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn tiled_blur_kernel(
     src: *const f32,
     dst: *mut f32,
     width: usize,
     height: usize,
-    kernel: *const f32,
-    kernel_integral: *const f32,
 ) {
-    // This kernel processes a 32x32 tile per block
-    // Each 16x16 thread block loads 48x48 shared memory (with 8-pixel halo)
-    // Not implementing full shared memory version in initial port
-    // TODO: Implement full tiled blur with shared memory
+    let idx = (core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize);
 
-    let block_x = core::arch::nvptx::_block_idx_x() as usize;
-    let blocks_per_row = (width + 31) / 32;
-
-    let tile_x = (block_x % blocks_per_row) * 32;
-    let tile_y = (block_x / blocks_per_row) * 32;
-
-    let tx = core::arch::nvptx::_thread_idx_x() as usize;
-    let ty = core::arch::nvptx::_thread_idx_y() as usize;
-
-    // Each thread processes 2x2 pixels
-    for dy in 0..2 {
-        for dx in 0..2 {
-            let x = tile_x + tx + dx * 16;
-            let y = tile_y + ty + dy * 16;
-
-            if x >= width || y >= height {
-                continue;
-            }
-
-            // Simple fallback: just copy for now
-            // TODO: Implement actual tiled blur
-            *dst.add(y * width + x) = *src.add(y * width + x);
-        }
+    if idx >= width * height {
+        return;
     }
+
+    // Just copy for now - tiled blur should be optimized later
+    *dst.add(idx) = *src.add(idx);
 }

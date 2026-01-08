@@ -156,6 +156,82 @@ pub unsafe extern "ptx-kernel" fn opsin_dynamics_kernel(
     *src_b.add(idx) = sz;
 }
 
+/// Deinterleave 3-channel image: RGB packed to R, G, B planes
+/// Input: RGBRGBRGB... Output: RRR..., GGG..., BBB...
+#[no_mangle]
+pub unsafe extern "ptx-kernel" fn deinterleave_3ch_kernel(
+    src: *const f32,
+    src_pitch: usize,
+    dst0: *mut f32, // First channel plane
+    dst1: *mut f32, // Second channel plane
+    dst2: *mut f32, // Third channel plane
+    width: usize,
+    height: usize,
+) {
+    let x = (core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize);
+    let y = (core::arch::nvptx::_block_idx_y() as usize
+        * core::arch::nvptx::_block_dim_y() as usize
+        + core::arch::nvptx::_thread_idx_y() as usize);
+
+    if x >= width || y >= height {
+        return;
+    }
+
+    let src_row = src.byte_add(y * src_pitch) as *const f32;
+    let idx = y * width + x;
+
+    *dst0.add(idx) = *src_row.add(x * 3);
+    *dst1.add(idx) = *src_row.add(x * 3 + 1);
+    *dst2.add(idx) = *src_row.add(x * 3 + 2);
+}
+
+/// Convert interleaved linear RGB to planar XYB (without opsin dynamics)
+/// More efficient version that does conversion and deinterleave in one pass
+#[no_mangle]
+pub unsafe extern "ptx-kernel" fn linear_to_xyb_planar_kernel(
+    src: *const f32,
+    src_pitch: usize,
+    dst_x: *mut f32, // X plane
+    dst_y: *mut f32, // Y plane
+    dst_b: *mut f32, // B plane
+    width: usize,
+    height: usize,
+) {
+    let x = (core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize);
+    let y = (core::arch::nvptx::_block_idx_y() as usize
+        * core::arch::nvptx::_block_dim_y() as usize
+        + core::arch::nvptx::_thread_idx_y() as usize);
+
+    if x >= width || y >= height {
+        return;
+    }
+
+    let src_row = src.byte_add(y * src_pitch) as *const f32;
+    let idx = y * width + x;
+
+    // Read linear RGB
+    let r = *src_row.add(x * 3);
+    let g = *src_row.add(x * 3 + 1);
+    let b = *src_row.add(x * 3 + 2);
+
+    // Apply opsin absorbance
+    let (ox, oy, oz) = opsin_absorbance(r, g, b, false);
+
+    // Apply gamma
+    let gx = gamma(ox.max(consts::OPSIN_BIAS_X));
+    let gy = gamma(oy.max(consts::OPSIN_BIAS_Y));
+    let gz = gamma(oz.max(consts::OPSIN_BIAS_B));
+
+    // Convert to XYB and store in planar format
+    *dst_x.add(idx) = gx - gy;
+    *dst_y.add(idx) = gx + gy;
+    *dst_b.add(idx) = gz;
+}
+
 /// Convert linear RGB to Butteraugli XYB (without opsin dynamics)
 /// Simpler version for direct conversion without adaptation
 #[no_mangle]

@@ -12,6 +12,10 @@ extern "C" {
     pub fn sqrtf(x: f32) -> f32;
     #[link_name = "__nv_sqrt"]
     pub fn sqrt(x: f64) -> f64;
+    #[link_name = "__nv_expf"]
+    pub fn expf(x: f32) -> f32;
+    #[link_name = "__nv_exp"]
+    pub fn expd(x: f64) -> f64;
     #[link_name = "__nv_logf"]
     pub fn logf(x: f32) -> f32;
     #[link_name = "__nv_log"]
@@ -40,6 +44,7 @@ pub trait StdMathExt {
     fn mul_add(self, a: Self, b: Self) -> Self;
     fn cbrt(self) -> Self;
     fn sqrt(self) -> Self;
+    fn exp(self) -> Self;
     fn log(self) -> Self;
     fn powf(self, p: Self) -> Self;
     fn powf_fast(self, p: Self) -> Self;
@@ -65,6 +70,11 @@ impl StdMathExt for f32 {
     #[inline]
     fn sqrt(self) -> Self {
         unsafe { sqrtf(self) }
+    }
+
+    #[inline]
+    fn exp(self) -> Self {
+        unsafe { expf(self) }
     }
 
     #[inline]
@@ -126,6 +136,11 @@ impl StdMathExt for f64 {
     #[inline]
     fn sqrt(self) -> Self {
         unsafe { sqrt(self) }
+    }
+
+    #[inline]
+    fn exp(self) -> Self {
+        unsafe { expd(self) }
     }
 
     #[inline]

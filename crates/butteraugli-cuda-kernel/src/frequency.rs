@@ -47,11 +47,12 @@ pub unsafe extern "ptx-kernel" fn xyb_low_freq_to_vals_kernel(
     *b_plane.add(idx) = b;
 }
 
-/// Subtract arrays: second[i] -= first[i]
+/// Subtract arrays: dst[i] = src1[i] - src2[i]
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn subtract_arrays_kernel(
-    first: *const f32,
-    second: *mut f32,
+    src1: *const f32,
+    src2: *const f32,
+    dst: *mut f32,
     size: usize,
 ) {
     let idx = (core::arch::nvptx::_block_idx_x() as usize
@@ -62,7 +63,7 @@ pub unsafe extern "ptx-kernel" fn subtract_arrays_kernel(
         return;
     }
 
-    *second.add(idx) = *second.add(idx) - *first.add(idx);
+    *dst.add(idx) = *src1.add(idx) - *src2.add(idx);
 }
 
 /// Remove range around zero: values close to zero become zero
