@@ -183,25 +183,29 @@ fn test_image_pair(ref_path: &str, dis_path: &str, tolerance: f64) {
 #[test]
 fn test_jpeg_quality_q90() {
     // Q90 is very high quality, should have low Butteraugli score
-    test_image_pair("source.png", "q90.jpg", 0.05); // 5% tolerance
+    // Actual error: ~0.97%, tolerance allows for GPU/CPU float differences
+    test_image_pair("source.png", "q90.jpg", 0.02); // 2% tolerance
 }
 
 #[test]
 fn test_jpeg_quality_q70() {
     // Q70 is good quality
-    test_image_pair("source.png", "q70.jpg", 0.05);
+    // Actual error: ~1.24%, tolerance allows for GPU/CPU float differences
+    test_image_pair("source.png", "q70.jpg", 0.02); // 2% tolerance
 }
 
 #[test]
 fn test_jpeg_quality_q45() {
     // Q45 is medium quality
-    test_image_pair("source.png", "q45.jpg", 0.05);
+    // Actual error: ~0.12%, best parity of all quality levels
+    test_image_pair("source.png", "q45.jpg", 0.01); // 1% tolerance
 }
 
 #[test]
 fn test_jpeg_quality_q20() {
     // Q20 is low quality, higher Butteraugli score
-    test_image_pair("source.png", "q20.jpg", 0.05);
+    // Actual error: ~0.88%, tolerance allows for GPU/CPU float differences
+    test_image_pair("source.png", "q20.jpg", 0.02); // 2% tolerance
 }
 
 /// Per-stage comparison test to identify divergence source

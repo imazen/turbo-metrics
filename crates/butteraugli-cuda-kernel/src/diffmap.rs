@@ -5,29 +5,35 @@
 use nvptx_std::math::StdMathExt;
 
 /// MaskY: compute mask value for AC differences
+/// Uses f64 internally like CPU for precision in division
 #[inline]
 fn mask_y(delta: f32) -> f32 {
-    const OFFSET: f32 = 0.829591754942;
-    const SCALER: f32 = 0.451936922203;
-    const MUL: f32 = 2.5485944793;
-    const NORM: f32 = 1.0 / (0.79079917404 * 17.83);
+    const OFFSET: f64 = 0.829591754942;
+    const SCALER: f64 = 0.451936922203;
+    const MUL: f64 = 2.5485944793;
+    // GLOBAL_SCALE = 1.0 / (0.79079917404 * 17.83)
+    const GLOBAL_SCALE: f64 = 0.07093654424083289;
 
+    let delta = delta as f64;
     let c = MUL / (SCALER * delta + OFFSET);
-    let retval = (1.0 + c) * NORM;
-    retval * retval
+    let retval = GLOBAL_SCALE * (1.0 + c);
+    (retval * retval) as f32
 }
 
 /// MaskDcY: compute mask value for DC differences
+/// Uses f64 internally like CPU for precision in division
 #[inline]
 fn mask_dc_y(delta: f32) -> f32 {
-    const OFFSET: f32 = 0.20025578522;
-    const SCALER: f32 = 3.87449418804;
-    const MUL: f32 = 0.505054525019;
-    const NORM: f32 = 1.0 / (0.79079917404 * 17.83);
+    const OFFSET: f64 = 0.20025578522;
+    const SCALER: f64 = 3.87449418804;
+    const MUL: f64 = 0.505054525019;
+    // GLOBAL_SCALE = 1.0 / (0.79079917404 * 17.83)
+    const GLOBAL_SCALE: f64 = 0.07093654424083289;
 
+    let delta = delta as f64;
     let c = MUL / (SCALER * delta + OFFSET);
-    let retval = (1.0 + c) * NORM;
-    retval * retval
+    let retval = GLOBAL_SCALE * (1.0 + c);
+    (retval * retval) as f32
 }
 
 /// Compute final diffmap from masked AC and DC differences
@@ -86,7 +92,10 @@ pub unsafe extern "ptx-kernel" fn l2_diff_kernel(
 }
 
 /// L2 asymmetric difference
-/// Different weights for when src1 > src2 vs src1 < src2
+/// Matches CPU butteraugli L2DiffAsymmetric exactly:
+/// - Primary symmetric quadratic: diff^2 * w_0gt1 * 0.8
+/// - Secondary half-open quadratic: v^2 * w_0lt1 * 0.8
+///   where v captures values outside "acceptable" range
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn l2_asym_diff_kernel(
     src1: *const f32,
@@ -104,12 +113,42 @@ pub unsafe extern "ptx-kernel" fn l2_asym_diff_kernel(
         return;
     }
 
-    let v1 = *src1.add(idx);
-    let v2 = *src2.add(idx);
-    let diff = v1 - v2;
-    let weight = if v1 > v2 { weight_gt } else { weight_lt };
+    let val0 = *src1.add(idx);
+    let val1 = *src2.add(idx);
 
-    *dst.add(idx) = *dst.add(idx) + weight * diff * diff;
+    // CPU multiplies weights by 0.8
+    let vw_0gt1 = weight_gt * 0.8;
+    let vw_0lt1 = weight_lt * 0.8;
+
+    // Primary symmetric quadratic objective
+    let diff = val0 - val1;
+    let mut total = *dst.add(idx) + diff * diff * vw_0gt1;
+
+    // Secondary half-open quadratic objectives
+    let fabs0 = val0.abs();
+    let too_small = 0.4 * fabs0;
+    let too_big = fabs0;
+
+    let v = if val0 < 0.0 {
+        if val1 > -too_small {
+            val1 + too_small
+        } else if val1 < -too_big {
+            -val1 - too_big
+        } else {
+            0.0
+        }
+    } else {
+        if val1 < too_small {
+            too_small - val1
+        } else if val1 > too_big {
+            val1 - too_big
+        } else {
+            0.0
+        }
+    };
+
+    total += vw_0lt1 * v * v;
+    *dst.add(idx) = total;
 }
 
 /// Compute x^q for each element (for norm calculation)
