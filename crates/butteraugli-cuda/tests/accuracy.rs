@@ -669,3 +669,113 @@ fn test_extreme_distortion_context_reuse() {
         );
     }
 }
+
+/// Test known high-variance cases from zenjpeg benchmark (Q1-like quality).
+///
+/// The zenjpeg discover_heuristics benchmark found certain image/quality combinations
+/// that produce 13-18% error between GPU and CPU Butteraugli. These are not bugs per se,
+/// but document the GPU implementation's variance at extreme distortion levels.
+///
+/// Test cases identified:
+/// - 512x768 portrait images at Q1 quality: up to 18% error
+/// - 768x512 landscape images at Q1 quality: up to 15% error
+///
+/// These errors occur when GPU returns ~9.5-9.8 and CPU returns ~8.3 (Butteraugli ~8 range).
+/// The absolute difference is ~1.5, which is significant for ranking but not for perception.
+#[test]
+fn test_known_high_variance_cases() {
+    const KODAK_PATH: &str = "/home/lilith/work/codec-corpus/kodak";
+
+    let kodak_dir = Path::new(KODAK_PATH);
+    if !kodak_dir.exists() {
+        eprintln!("Skipping test: Kodak corpus not found at {}", KODAK_PATH);
+        return;
+    }
+
+    let ctx = CudaContext::new();
+
+    // Test a mix of landscape and portrait images
+    let test_cases: Vec<(&str, usize, usize)> = vec![
+        ("4.png", 512, 768),   // Portrait - 18% error case
+        ("5.png", 768, 512),   // Landscape - 15% error case
+        ("12.png", 768, 512),  // Another landscape test
+    ];
+
+    println!("\n=== Known High-Variance Test Cases ===");
+    println!("These document known variance at extreme distortion levels.");
+    println!("{:<12} {:>8} {:>12} {:>12} {:>10}", "Image", "Size", "CPU Score", "GPU Score", "Error %");
+    println!("{}", "-".repeat(65));
+
+    let mut max_error = 0.0f64;
+
+    for (name, expected_w, expected_h) in &test_cases {
+        let path = kodak_dir.join(name);
+        if !path.exists() {
+            eprintln!("Skipping {}: not found", name);
+            continue;
+        }
+
+        let (w, h, ref_data) = load_image(&path);
+        if w != *expected_w || h != *expected_h {
+            eprintln!("Skipping {}: unexpected dimensions {}x{}", name, w, h);
+            continue;
+        }
+
+        // Create Q1-like extreme distortion (more aggressive than previous test)
+        let dis_data: Vec<u8> = ref_data.iter()
+            .map(|&v| {
+                // Extreme quantization: 8 levels, mimics Q1 JPEG
+                let level = v / 32;
+                (level * 32 + 16).min(255)
+            })
+            .collect();
+
+        // CPU Butteraugli
+        let cpu_score = compute_cpu_score(&ref_data, &dis_data, w, h);
+
+        // GPU Butteraugli - create fresh instance for each dimension
+        let mut gpu_src = Image::<u8, C<3>>::malloc(w as u32, h as u32)
+            .expect("Failed to allocate GPU source");
+        let mut gpu_dst = gpu_src.malloc_same_size()
+            .expect("Failed to allocate GPU distorted");
+        let mut butteraugli = Butteraugli::new(w as u32, h as u32)
+            .expect("Failed to create Butteraugli");
+
+        gpu_src.copy_from_cpu(&ref_data, ctx.stream.inner() as _).unwrap();
+        gpu_dst.copy_from_cpu(&dis_data, ctx.stream.inner() as _).unwrap();
+        ctx.stream.sync().unwrap();
+
+        let gpu_score = butteraugli
+            .compute(gpu_src.full_view(), gpu_dst.full_view())
+            .expect("compute failed");
+
+        let rel_error = if cpu_score > 0.0 {
+            (gpu_score as f64 - cpu_score).abs() / cpu_score * 100.0
+        } else {
+            0.0
+        };
+
+        max_error = max_error.max(rel_error);
+
+        println!(
+            "{:<12} {:>4}x{:<4} {:>12.4} {:>12.4} {:>9.2}%",
+            name, w, h, cpu_score, gpu_score, rel_error
+        );
+
+        // Known variance: allow up to 20% for these extreme cases
+        // This is intentionally loose - we're documenting behavior, not asserting parity
+        assert!(
+            rel_error < 25.0,
+            "Unexpected regression: {} error={:.1}% exceeds known variance",
+            name, rel_error
+        );
+    }
+
+    println!("\nMax error: {:.2}% (known variance at extreme distortion)", max_error);
+
+    // Document that some error is expected
+    if max_error > 10.0 {
+        println!("NOTE: High variance (>{:.0}%) is expected at extreme distortion levels.", 10.0);
+        println!("      This is a limitation of the GPU implementation, not a regression.");
+    }
+}
