@@ -91,9 +91,11 @@ fn amplify_range_around_zero(x: f32, w: f32) -> f32 {
 }
 
 /// Maximum clamp: soft limit values above maxval
+/// Matches CPU butteraugli psycho.rs maximum_clamp
 #[inline]
 fn maximum_clamp(v: f32, maxval: f32) -> f32 {
-    const KMUL: f32 = 0.688059627878;
+    // Note: Vship used 0.688059627878, but CPU butteraugli uses 0.724216146
+    const KMUL: f32 = 0.724216146;
     if v >= maxval {
         (v - maxval) * KMUL + maxval
     } else if v < -maxval {
@@ -203,4 +205,18 @@ pub unsafe extern "ptx-kernel" fn remove_range_kernel(arr: *mut f32, size: usize
     }
 
     *arr.add(idx) = remove_range_around_zero(*arr.add(idx), w);
+}
+
+/// Amplify range around zero (standalone)
+#[no_mangle]
+pub unsafe extern "ptx-kernel" fn amplify_range_kernel(arr: *mut f32, size: usize, w: f32) {
+    let idx = (core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize);
+
+    if idx >= size {
+        return;
+    }
+
+    *arr.add(idx) = amplify_range_around_zero(*arr.add(idx), w);
 }

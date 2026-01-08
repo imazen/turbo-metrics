@@ -56,8 +56,12 @@ pub unsafe extern "ptx-kernel" fn downsample_2x_kernel(
     *dst.add(y * dst_width + x) = sum / count;
 }
 
-/// Add upsampled 2x image to destination with scaling factor
+/// Add upsampled 2x image to destination with heuristic mixing
 /// Used for combining multi-resolution diffmaps
+///
+/// Matches libjxl/butteraugli's add_supersampled_2x heuristic:
+///   mixed = prev * (1 - K_HEURISTIC_MIXING * weight) + weight * src
+/// where K_HEURISTIC_MIXING = 0.3
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn add_upsample_2x_kernel(
     dst: *mut f32,
@@ -79,11 +83,17 @@ pub unsafe extern "ptx-kernel" fn add_upsample_2x_kernel(
         return;
     }
 
+    // Heuristic from C++: lower resolution images have less error
+    const K_HEURISTIC_MIXING_VALUE: f32 = 0.3;
+
     // Nearest-neighbor upsampling
     let src_x = x / 2;
     let src_y = y / 2;
 
     let src_val = *src.add(src_y * src_width + src_x);
     let dst_idx = y * dst_width + x;
-    *dst.add(dst_idx) = *dst.add(dst_idx) + src_val * scale;
+    let prev = *dst.add(dst_idx);
+
+    // Apply heuristic mixing: prev * (1 - 0.3 * weight) + weight * src_val
+    *dst.add(dst_idx) = prev * (1.0 - K_HEURISTIC_MIXING_VALUE * scale) + scale * src_val;
 }

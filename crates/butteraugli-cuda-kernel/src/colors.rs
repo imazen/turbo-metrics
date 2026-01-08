@@ -18,19 +18,46 @@ mod consts {
     pub const GAMMA_SUB: f32 = 23.16046239805755;
 }
 
-/// Convert sRGB value to linear RGB (gamma 2.4)
+/// Convert sRGB value to linear RGB using proper sRGB transfer function
+/// This matches the CPU butteraugli implementation
 #[inline]
 fn srgb_to_linear(v: f32) -> f32 {
-    if v < 0.0 {
-        -(-v).powf(2.4)
+    // sRGB transfer function with linear section for low values
+    // This is critical for accurate color conversion
+    if v <= 0.04045 {
+        v / 12.92
+    } else if v > 0.0 {
+        ((v + 0.055) / 1.055).powf(2.4)
     } else {
-        v.powf(2.4)
+        // Handle negative values (shouldn't happen normally)
+        -srgb_to_linear(-v)
     }
 }
 
+/// Inverse of log2(e) for converting fast_log2 to natural log
+const K_INV_LOG2E: f32 = 0.6931471805599453; // = ln(2) = 1/log2(e)
+
 /// Butteraugli gamma function
+/// Uses log2-based computation matching the CPU's fast_log2f implementation
 #[inline]
 fn gamma(v: f32) -> f32 {
+    // CPU uses: K_RET_MUL * fast_log2f(v + K_BIAS) + K_RET_ADD
+    // where K_RET_MUL = 19.245 * K_INV_LOG2E = 19.245 / log2(e) ≈ 13.33
+    //
+    // Since CUDA's log() is natural log:
+    //   log2(x) = ln(x) / ln(2)
+    // So: K_RET_MUL * log2(x) = K_RET_MUL * ln(x) / ln(2)
+    //                        = (K_RET_MUL / ln(2)) * ln(x)
+    //                        = GAMMA_MUL * ln(x)
+    // where GAMMA_MUL = K_RET_MUL / ln(2) = 19.245 / log2(e) / ln(2) = 19.245 / (log2(e) * ln(2))
+    //                 = 19.245 / 1 = 19.245 (since log2(e) * ln(2) = 1)
+    //
+    // So the GPU formula with natural log should be:
+    // 19.245 * ln(v + 9.97) - 23.16
+    //
+    // Let's verify: log2(e) ≈ 1.4427, ln(2) ≈ 0.6931
+    // log2(e) * ln(2) = 1 (exactly)
+    // So 19.245 / (log2(e) * ln(2)) = 19.245 / 1 = 19.245 ✓
     consts::GAMMA_MUL * (v + consts::GAMMA_ADD).log() - consts::GAMMA_SUB
 }
 
@@ -187,8 +214,12 @@ pub unsafe extern "ptx-kernel" fn deinterleave_3ch_kernel(
     *dst2.add(idx) = *src_row.add(x * 3 + 2);
 }
 
-/// Convert interleaved linear RGB to planar XYB (without opsin dynamics)
-/// More efficient version that does conversion and deinterleave in one pass
+/// Convert interleaved linear RGB to planar XYB (without opsin dynamics blur)
+/// Uses simplified opsin dynamics: intensity_target scaling + gamma
+///
+/// This matches the CPU butteraugli's OpsinDynamicsImage when the blur
+/// equals the input (i.e., uniform regions). For the full implementation,
+/// use opsin_dynamics_kernel which includes blur-based adaptation.
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn linear_to_xyb_planar_kernel(
     src: *const f32,
@@ -198,6 +229,7 @@ pub unsafe extern "ptx-kernel" fn linear_to_xyb_planar_kernel(
     dst_b: *mut f32, // B plane
     width: usize,
     height: usize,
+    intensity_target: f32, // Default: 80.0 (nits for 1.0 input)
 ) {
     let x = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
@@ -213,26 +245,33 @@ pub unsafe extern "ptx-kernel" fn linear_to_xyb_planar_kernel(
     let src_row = src.byte_add(y * src_pitch) as *const f32;
     let idx = y * width + x;
 
-    // Read linear RGB
-    let r = *src_row.add(x * 3);
-    let g = *src_row.add(x * 3 + 1);
-    let b = *src_row.add(x * 3 + 2);
+    // Read linear RGB and scale by intensity_target (as the CPU does)
+    let r = *src_row.add(x * 3) * intensity_target;
+    let g = *src_row.add(x * 3 + 1) * intensity_target;
+    let b = *src_row.add(x * 3 + 2) * intensity_target;
 
-    // Apply opsin absorbance
+    // Apply opsin absorbance (pre-mix RGB channels with bias)
     let (ox, oy, oz) = opsin_absorbance(r, g, b, false);
 
-    // Apply gamma
+    // Clamp to minimum bias values and apply gamma
+    // This is the simplified opsin dynamics formula:
+    // For uniform regions where blur == input:
+    //   sensitivity = gamma(pre) / pre
+    //   result = pre * sensitivity = gamma(pre)
     let gx = gamma(ox.max(consts::OPSIN_BIAS_X));
     let gy = gamma(oy.max(consts::OPSIN_BIAS_Y));
     let gz = gamma(oz.max(consts::OPSIN_BIAS_B));
 
     // Convert to XYB and store in planar format
+    // X = gamma(mix0) - gamma(mix1)  (opponent channel)
+    // Y = gamma(mix0) + gamma(mix1)  (luminance-like)
+    // B = gamma(mix2)                (blue channel)
     *dst_x.add(idx) = gx - gy;
     *dst_y.add(idx) = gx + gy;
     *dst_b.add(idx) = gz;
 }
 
-/// Convert linear RGB to Butteraugli XYB (without opsin dynamics)
+/// Convert linear RGB to Butteraugli XYB (interleaved output)
 /// Simpler version for direct conversion without adaptation
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn linear_to_xyb_kernel(
@@ -242,6 +281,7 @@ pub unsafe extern "ptx-kernel" fn linear_to_xyb_kernel(
     dst_pitch: usize,
     width: usize,
     height: usize,
+    intensity_target: f32, // Default: 80.0
 ) {
     let x = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
@@ -257,10 +297,10 @@ pub unsafe extern "ptx-kernel" fn linear_to_xyb_kernel(
     let src_row = src.byte_add(y * src_pitch) as *const f32;
     let dst_row = dst.byte_add(y * dst_pitch) as *mut f32;
 
-    // Read RGB (packed)
-    let r = *src_row.add(x * 3);
-    let g = *src_row.add(x * 3 + 1);
-    let b = *src_row.add(x * 3 + 2);
+    // Read RGB and scale by intensity_target
+    let r = *src_row.add(x * 3) * intensity_target;
+    let g = *src_row.add(x * 3 + 1) * intensity_target;
+    let b = *src_row.add(x * 3 + 2) * intensity_target;
 
     // Apply opsin absorbance
     let (ox, oy, oz) = opsin_absorbance(r, g, b, false);

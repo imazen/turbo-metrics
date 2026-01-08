@@ -194,55 +194,60 @@ unsafe fn malta_unit(d: *const f32, xs: isize) -> f32 {
         retval += sum * sum;
     }
 
-    // Direction 13
+    // Direction 13: same as 8 (curved line pattern)
+    // CPU intentionally duplicates patterns 5-8 as 13-16
     {
-        let sum = *d.offset(xs + xs - 4)
-            + *d.offset(xs + xs - 3)
-            + *d.offset(xs - 2)
-            + *d.offset(xs - 1)
+        let sum = *d.offset(-4 + xs)
+            + *d.offset(-3 + xs)
+            + *d.offset(-2 + xs)
+            + *d.offset(-1)
             + *d
             + *d.offset(1)
-            + *d.offset(-xs + 2)
-            + *d.offset(-xs + 3);
+            + *d.offset(2 - xs)
+            + *d.offset(3 - xs)
+            + *d.offset(4 - xs);
         retval += sum * sum;
     }
 
-    // Direction 14
+    // Direction 14: same as 7 (curved line other direction)
     {
-        let sum = *d.offset(-xs - xs - 4)
-            + *d.offset(-xs - xs - 3)
-            + *d.offset(-xs - 2)
-            + *d.offset(-xs - 1)
+        let sum = *d.offset(-4 - xs)
+            + *d.offset(-3 - xs)
+            + *d.offset(-2 - xs)
+            + *d.offset(-1)
             + *d
             + *d.offset(1)
-            + *d.offset(xs + 2)
-            + *d.offset(xs + 3);
+            + *d.offset(2 + xs)
+            + *d.offset(3 + xs)
+            + *d.offset(4 + xs);
         retval += sum * sum;
     }
 
-    // Direction 15
+    // Direction 15: same as 6 (very shallow curve)
     {
-        let sum = *d.offset(-xs3 - xs - 2)
-            + *d.offset(-xs3 - 2)
+        let sum = *d.offset(-xs3 - xs - 1)
+            + *d.offset(-xs3 - 1)
             + *d.offset(-xs - xs - 1)
-            + *d.offset(-xs - 1)
+            + *d.offset(-xs)
             + *d
             + *d.offset(xs)
             + *d.offset(xs + xs + 1)
-            + *d.offset(xs3 + 1);
+            + *d.offset(xs3 + 1)
+            + *d.offset(xs3 + xs + 1);
         retval += sum * sum;
     }
 
-    // Direction 16
+    // Direction 16: same as 5 (very shallow curve other direction)
     {
-        let sum = *d.offset(-xs3 - xs + 2)
-            + *d.offset(-xs3 + 2)
+        let sum = *d.offset(-xs3 - xs + 1)
+            + *d.offset(-xs3 + 1)
             + *d.offset(-xs - xs + 1)
-            + *d.offset(-xs + 1)
+            + *d.offset(-xs)
             + *d
             + *d.offset(xs)
             + *d.offset(xs + xs - 1)
-            + *d.offset(xs3 - 1);
+            + *d.offset(xs3 - 1)
+            + *d.offset(xs3 + xs - 1);
         retval += sum * sum;
     }
 
@@ -455,6 +460,14 @@ fn compute_diff(lum0: f32, lum1: f32, norm1: f32, norm2_0gt1: f32, norm2_0lt1: f
 ///
 /// Uses 16x16 thread blocks with 24x24 shared memory (4-pixel halo).
 /// Each thread computes Malta filter response for one pixel.
+///
+/// Parameters norm2_0gt1 and norm2_0lt1 should be pre-computed on host with f64 precision:
+///   let mulli = 0.39905817637_f64;
+///   let k_weight0 = 0.5_f64;
+///   let k_weight1 = 0.33_f64;
+///   let len2 = 3.75_f64 * 2.0 + 1.0;
+///   let norm2_0gt1 = (mulli * (k_weight0 * w_0gt1).sqrt() / len2 * norm1) as f32;
+///   let norm2_0lt1 = (mulli * (k_weight1 * w_0lt1).sqrt() / len2 * norm1) as f32;
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn malta_diff_map_kernel(
     lum0: *const f32,
@@ -462,8 +475,8 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_kernel(
     block_diff_ac: *mut f32,
     width: usize,
     height: usize,
-    w_0gt1: f32,
-    w_0lt1: f32,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
     norm1: f32,
 ) {
     // Thread and block indices
@@ -475,12 +488,7 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_kernel(
     let x = bx * TILE_SIZE + tx;
     let y = by * TILE_SIZE + ty;
 
-    // Precompute scaling factors
-    let len2 = MALTA_LEN * 2.0 + 1.0;
-    let w_pre0gt1 = MALTA_MULLI_HF * (KWEIGHT0 * w_0gt1).sqrt() / len2;
-    let w_pre0lt1 = MALTA_MULLI_HF * (KWEIGHT1 * w_0lt1).sqrt() / len2;
-    let norm2_0gt1 = w_pre0gt1 * norm1;
-    let norm2_0lt1 = w_pre0lt1 * norm1;
+    // norm2_0gt1 and norm2_0lt1 are now pre-computed on host with f64 precision
 
     // Compute tile origin (top-left corner with halo)
     let topleftx = (bx * TILE_SIZE) as isize - HALO as isize;
@@ -528,6 +536,14 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_kernel(
 }
 
 /// Malta difference map kernel (low frequency version)
+///
+/// Parameters norm2_0gt1 and norm2_0lt1 should be pre-computed on host with f64 precision:
+///   let mulli = 0.611612573796_f64;  // LF variant uses different mulli
+///   let k_weight0 = 0.5_f64;
+///   let k_weight1 = 0.33_f64;
+///   let len2 = 3.75_f64 * 2.0 + 1.0;
+///   let norm2_0gt1 = (mulli * (k_weight0 * w_0gt1).sqrt() / len2 * norm1) as f32;
+///   let norm2_0lt1 = (mulli * (k_weight1 * w_0lt1).sqrt() / len2 * norm1) as f32;
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_kernel(
     lum0: *const f32,
@@ -535,8 +551,8 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_kernel(
     block_diff_ac: *mut f32,
     width: usize,
     height: usize,
-    w_0gt1: f32,
-    w_0lt1: f32,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
     norm1: f32,
 ) {
     // Thread and block indices
@@ -548,12 +564,7 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_kernel(
     let x = bx * TILE_SIZE + tx;
     let y = by * TILE_SIZE + ty;
 
-    // Precompute scaling factors
-    let len2 = MALTA_LEN * 2.0 + 1.0;
-    let w_pre0gt1 = MALTA_MULLI_LF * (KWEIGHT0 * w_0gt1).sqrt() / len2;
-    let w_pre0lt1 = MALTA_MULLI_LF * (KWEIGHT1 * w_0lt1).sqrt() / len2;
-    let norm2_0gt1 = w_pre0gt1 * norm1;
-    let norm2_0lt1 = w_pre0lt1 * norm1;
+    // norm2_0gt1 and norm2_0lt1 are now pre-computed on host with f64 precision
 
     // Compute tile origin
     let topleftx = (bx * TILE_SIZE) as isize - HALO as isize;

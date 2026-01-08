@@ -5,20 +5,26 @@
 
 use nvptx_std::math::StdMathExt;
 
-// Masking constants
-const MASK_MUL_X: f32 = 2.5;
-const MASK_MUL_Y_UHF: f32 = 0.4;
-const MASK_MUL_Y_HF: f32 = 0.4;
+// CombineChannelsForMasking multipliers - from libjxl butteraugli.cc
+// COMBINE_CHANNELS_MULS = [2.5, 0.4, 0.4]
+const COMBINE_MUL_X: f32 = 2.5;     // For (uhf_x + hf_x)
+const COMBINE_MUL_Y_UHF: f32 = 0.4; // For uhf_y
+const COMBINE_MUL_Y_HF: f32 = 0.4;  // For hf_y
 
 const DIFF_PRECOMPUTE_MUL: f32 = 6.19424080439;
 const DIFF_PRECOMPUTE_BIAS: f32 = 12.61050594197;
 
 const EROSION_STEP: usize = 3;
 
-/// Initialize mask from HF and UHF bands
-/// Combines X and Y channels with different weights
+// Weight for MaskToErrorMul contribution to block_diff_ac[Y]
+const MASK_TO_ERROR_MUL: f32 = 10.0;
+
+/// Combine HF and UHF channels for masking computation (single image)
+/// Matches libjxl's CombineChannelsForMasking
+///
+/// Formula: sqrt((uhf_x + hf_x)² * 2.5² + (uhf_y * 0.4 + hf_y * 0.4)²)
 #[no_mangle]
-pub unsafe extern "ptx-kernel" fn mask_init_kernel(
+pub unsafe extern "ptx-kernel" fn combine_channels_for_masking_kernel(
     hf_x: *const f32,
     uhf_x: *const f32,
     hf_y: *const f32,
@@ -34,10 +40,33 @@ pub unsafe extern "ptx-kernel" fn mask_init_kernel(
         return;
     }
 
-    let x_diff = (*uhf_x.add(idx) + *hf_x.add(idx)) * MASK_MUL_X;
-    let y_diff = *uhf_y.add(idx) * MASK_MUL_Y_UHF + *hf_y.add(idx) * MASK_MUL_Y_HF;
+    // xdiff = (uhf_x + hf_x) * 2.5
+    let xdiff = (*uhf_x.add(idx) + *hf_x.add(idx)) * COMBINE_MUL_X;
+    // ydiff = uhf_y * 0.4 + hf_y * 0.4
+    let ydiff = *uhf_y.add(idx) * COMBINE_MUL_Y_UHF + *hf_y.add(idx) * COMBINE_MUL_Y_HF;
+    // result = sqrt(xdiff² + ydiff²)
+    *dst.add(idx) = (xdiff * xdiff + ydiff * ydiff).sqrt();
+}
 
-    *dst.add(idx) = (x_diff * x_diff + y_diff * y_diff).sqrt();
+/// MaskToErrorMul: Add contribution from blurred UHF Y difference to block_diff_ac[Y]
+/// This is called after mask computation to add additional psychovisual weighting
+#[no_mangle]
+pub unsafe extern "ptx-kernel" fn mask_to_error_mul_kernel(
+    blurred1: *const f32,  // Blurred UHF Y from image 1
+    blurred2: *const f32,  // Blurred UHF Y from image 2
+    block_diff_ac: *mut f32,  // Y channel of block_diff_ac (accumulator)
+    size: usize,
+) {
+    let idx = (core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize);
+
+    if idx >= size {
+        return;
+    }
+
+    let diff = *blurred1.add(idx) - *blurred2.add(idx);
+    *block_diff_ac.add(idx) = *block_diff_ac.add(idx) + MASK_TO_ERROR_MUL * diff * diff;
 }
 
 /// Precompute diff values for masking
