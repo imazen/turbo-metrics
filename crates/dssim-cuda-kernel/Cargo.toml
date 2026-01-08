@@ -1,0 +1,18 @@
+[package]
+name = "dssim-cuda-kernel"
+version = "0.1.0"
+description = "DSSIM CUDA implementation (device code)"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license = "MIT"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+nvptx-std = { workspace = true, features = ["minimal-panic"] }
+
+[build-dependencies]
+nvptx-builder = { workspace = true }

@@ -4,6 +4,8 @@ members = [
     "crates/amf-sys",
     "crates/butteraugli-cuda",
     "crates/butteraugli-cuda-kernel",
+    "crates/dssim-cuda",
+    "crates/dssim-cuda-kernel",
     "crates/codec-bitstream",
     "crates/cuda-colorspace",
     "crates/cuda-colorspace-kernel",
@@ -59,6 +61,7 @@ superframe = { version = "0.1", path = "crates/superframe" }
 turbo-metrics = { version = "0.3", path = "crates/turbo-metrics", default-features = false }
 xpsnr-cuda = { version = "0.1", path = "crates/xpsnr-cuda", default-features = false }
 butteraugli-cuda = { version = "0.1", path = "crates/butteraugli-cuda", default-features = false }
+dssim-cuda = { version = "0.1", path = "crates/dssim-cuda", default-features = false }
 
 array-init = "2"
 bindgen = "0.70"
@@ -84,6 +87,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 widestring = "1"
 zune-core = { version = "0.4", default-features = false, features = ["std"] }
 zune-image = { version = "0.4", default-features = false }
+dssim-core = { version = "3.4", default-features = false }
 
 # Profile specifically for building nvptx code
 [profile.release-nvptx]
