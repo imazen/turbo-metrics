@@ -19,7 +19,12 @@ indices = { workspace = true }
 nvptx-builder = { workspace = true }
 
 [dev-dependencies]
-zune-image = { workspace = true, features = ["png", "simd", "metadata"] }
+zune-image = { workspace = true, features = ["png", "jpeg", "simd", "metadata"] }
+zune-core = { workspace = true }
+butteraugli = { path = "/home/lilith/work/butteraugli/butteraugli", features = ["internals"] }
+imgref = "1.9"
+rgb = "0.8"
+sha2 = "0.10"
 
 [features]
 default = ["static"]
