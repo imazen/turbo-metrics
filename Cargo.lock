@@ -190,6 +190,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79296716171880943b8470b5f8d03aa55eb2e645a4874bdbb28adb49162e012c"
 
 [[package]]
+name = "butteraugli-cuda"
+version = "0.1.0"
+dependencies = [
+ "array-init",
+ "cudarse-driver",
+ "cudarse-npp",
+ "indices",
+ "nvptx-builder",
+ "zune-image",
+]
+
+[[package]]
+name = "butteraugli-cuda-kernel"
+version = "0.1.0"
+dependencies = [
+ "nvptx-builder",
+ "nvptx-std",
+]
+
+[[package]]
 name = "byte-slice-cast"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

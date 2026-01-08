@@ -7,12 +7,20 @@ use core::ffi::CStr;
 mod helpers;
 /// Replacements for some math functions that are only present in std using libdevice.
 pub mod math;
+
+#[cfg(all(feature = "panic-handler", not(feature = "minimal-panic")))]
 mod panic;
+
+// Minimal panic handler that just traps - avoids pulling in core::fmt (saves ~3000 lines of PTX)
+#[cfg(feature = "minimal-panic")]
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    unsafe { core::arch::nvptx::trap() }
+}
 
 pub mod prelude {
     pub use crate::helpers::*;
     pub use crate::math::*;
-    pub use crate::panic::*;
 }
 
 /// You can use the standard C printf template arguments.

@@ -10,4 +10,11 @@ license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["panic-handler"]
+# Include the panic handler. Disable if you want to provide your own minimal handler.
+panic-handler = []
+# Use minimal panic handler that just traps (avoids pulling in core::fmt)
+minimal-panic = []
+
 [dependencies]

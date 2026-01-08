@@ -2,6 +2,8 @@
 members = [
     "crates/amf",
     "crates/amf-sys",
+    "crates/butteraugli-cuda",
+    "crates/butteraugli-cuda-kernel",
     "crates/codec-bitstream",
     "crates/cuda-colorspace",
     "crates/cuda-colorspace-kernel",
@@ -56,6 +58,7 @@ ssimulacra2-cuda = { version = "0.1", path = "crates/ssimulacra2-cuda", default-
 superframe = { version = "0.1", path = "crates/superframe" }
 turbo-metrics = { version = "0.3", path = "crates/turbo-metrics", default-features = false }
 xpsnr-cuda = { version = "0.1", path = "crates/xpsnr-cuda", default-features = false }
+butteraugli-cuda = { version = "0.1", path = "crates/butteraugli-cuda", default-features = false }
 
 array-init = "2"
 bindgen = "0.70"
@@ -90,6 +93,7 @@ lto = "fat"
 debug = false
 codegen-units = 1
 overflow-checks = false
+panic = "abort"
 
 [profile.release]
 opt-level = 3

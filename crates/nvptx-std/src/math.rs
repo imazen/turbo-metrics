@@ -8,6 +8,14 @@ extern "C" {
     pub fn cbrtf(x: f32) -> f32;
     #[link_name = "__nv_cbrt"]
     pub fn cbrt(x: f64) -> f64;
+    #[link_name = "__nv_sqrtf"]
+    pub fn sqrtf(x: f32) -> f32;
+    #[link_name = "__nv_sqrt"]
+    pub fn sqrt(x: f64) -> f64;
+    #[link_name = "__nv_logf"]
+    pub fn logf(x: f32) -> f32;
+    #[link_name = "__nv_log"]
+    pub fn log(x: f64) -> f64;
     #[link_name = "__nv_powf"]
     pub fn powf(x: f32, y: f32) -> f32;
     #[link_name = "__nv_pow"]
@@ -31,6 +39,8 @@ extern "C" {
 pub trait StdMathExt {
     fn mul_add(self, a: Self, b: Self) -> Self;
     fn cbrt(self) -> Self;
+    fn sqrt(self) -> Self;
+    fn log(self) -> Self;
     fn powf(self, p: Self) -> Self;
     fn powf_fast(self, p: Self) -> Self;
     fn abs(self) -> Self;
@@ -50,6 +60,16 @@ impl StdMathExt for f32 {
     #[inline]
     fn cbrt(self) -> Self {
         unsafe { cbrtf(self) }
+    }
+
+    #[inline]
+    fn sqrt(self) -> Self {
+        unsafe { sqrtf(self) }
+    }
+
+    #[inline]
+    fn log(self) -> Self {
+        unsafe { logf(self) }
     }
 
     #[inline]
@@ -101,6 +121,16 @@ impl StdMathExt for f64 {
     #[inline]
     fn cbrt(self) -> Self {
         unsafe { cbrt(self) }
+    }
+
+    #[inline]
+    fn sqrt(self) -> Self {
+        unsafe { sqrt(self) }
+    }
+
+    #[inline]
+    fn log(self) -> Self {
+        unsafe { log(self) }
     }
 
     #[inline]
