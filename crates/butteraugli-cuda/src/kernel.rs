@@ -19,6 +19,8 @@ pub struct Kernel {
     horizontal_blur: CuFunction,
     vertical_blur: CuFunction,
     tiled_blur: CuFunction,
+    blur_mirrored_5x5_h: CuFunction,
+    blur_mirrored_5x5_v: CuFunction,
     // Downscale
     downsample_2x: CuFunction,
     add_upsample_2x: CuFunction,
@@ -30,11 +32,13 @@ pub struct Kernel {
     suppress_x_by_y: CuFunction,
     separate_hf_uhf: CuFunction,
     remove_range: CuFunction,
+    amplify_range: CuFunction,
     // Malta
     malta_diff_map: CuFunction,
     malta_diff_map_lf: CuFunction,
     // Masking
-    mask_init: CuFunction,
+    combine_channels_for_masking: CuFunction,
+    mask_to_error_mul: CuFunction,
     diff_precompute: CuFunction,
     fuzzy_erosion: CuFunction,
     // Diffmap
@@ -78,6 +82,12 @@ impl Kernel {
             tiled_blur: module
                 .function_by_name("tiled_blur_kernel")
                 .expect("tiled_blur_kernel not found"),
+            blur_mirrored_5x5_h: module
+                .function_by_name("blur_mirrored_5x5_horizontal_kernel")
+                .expect("blur_mirrored_5x5_horizontal_kernel not found"),
+            blur_mirrored_5x5_v: module
+                .function_by_name("blur_mirrored_5x5_vertical_kernel")
+                .expect("blur_mirrored_5x5_vertical_kernel not found"),
             downsample_2x: module
                 .function_by_name("downsample_2x_kernel")
                 .expect("downsample_2x_kernel not found"),
@@ -105,15 +115,21 @@ impl Kernel {
             remove_range: module
                 .function_by_name("remove_range_kernel")
                 .expect("remove_range_kernel not found"),
+            amplify_range: module
+                .function_by_name("amplify_range_kernel")
+                .expect("amplify_range_kernel not found"),
             malta_diff_map: module
                 .function_by_name("malta_diff_map_kernel")
                 .expect("malta_diff_map_kernel not found"),
             malta_diff_map_lf: module
                 .function_by_name("malta_diff_map_lf_kernel")
                 .expect("malta_diff_map_lf_kernel not found"),
-            mask_init: module
-                .function_by_name("mask_init_kernel")
-                .expect("mask_init_kernel not found"),
+            combine_channels_for_masking: module
+                .function_by_name("combine_channels_for_masking_kernel")
+                .expect("combine_channels_for_masking_kernel not found"),
+            mask_to_error_mul: module
+                .function_by_name("mask_to_error_mul_kernel")
+                .expect("mask_to_error_mul_kernel not found"),
             diff_precompute: module
                 .function_by_name("diff_precompute_kernel")
                 .expect("diff_precompute_kernel not found"),
@@ -233,7 +249,8 @@ impl Kernel {
         }
     }
 
-    /// Simple linear RGB to XYB (without opsin dynamics)
+    /// Simple linear RGB to XYB (without opsin dynamics blur)
+    /// Uses intensity_target = 80.0 (standard nits for sRGB content).
     pub fn linear_to_xyb(
         &self,
         stream: &CuStream,
@@ -253,6 +270,7 @@ impl Kernel {
                         dst.pitch() as usize,
                         src.width() as usize,
                         src.height() as usize,
+                        80.0f32, // intensity_target
                     ),
                 )
                 .expect("linear_to_xyb launch failed");
@@ -260,6 +278,9 @@ impl Kernel {
     }
 
     /// Convert interleaved linear RGB to planar XYB
+    ///
+    /// Uses intensity_target = 80.0 (standard nits for sRGB content).
+    /// This matches the CPU butteraugli's default behavior.
     pub fn linear_to_xyb_planar(
         &self,
         stream: &CuStream,
@@ -267,6 +288,23 @@ impl Kernel {
         dst_x: *mut f32,
         dst_y: *mut f32,
         dst_b: *mut f32,
+    ) {
+        self.linear_to_xyb_planar_with_intensity(stream, src, dst_x, dst_y, dst_b, 80.0);
+    }
+
+    /// Convert interleaved linear RGB to planar XYB with custom intensity target
+    ///
+    /// The intensity_target parameter specifies how many nits (cd/m²) correspond
+    /// to 1.0 in the linear RGB input. Default is 80.0 for standard sRGB content.
+    /// Use higher values (e.g., 250.0) for HDR content.
+    pub fn linear_to_xyb_planar_with_intensity(
+        &self,
+        stream: &CuStream,
+        src: impl Img<f32, C<3>>,
+        dst_x: *mut f32,
+        dst_y: *mut f32,
+        dst_b: *mut f32,
+        intensity_target: f32,
     ) {
         unsafe {
             self.linear_to_xyb_planar
@@ -281,6 +319,7 @@ impl Kernel {
                         dst_b,
                         src.width() as usize,
                         src.height() as usize,
+                        intensity_target,
                     ),
                 )
                 .expect("linear_to_xyb_planar launch failed");
@@ -377,7 +416,7 @@ impl Kernel {
         }
     }
 
-    /// Two-pass separable Gaussian blur
+    /// Two-pass separable Gaussian blur (clamp-to-edge boundaries)
     pub fn blur(
         &self,
         stream: &CuStream,
@@ -394,7 +433,46 @@ impl Kernel {
         self.vertical_blur(stream, temp, dst, width, height, sigma);
     }
 
+    /// Two-pass separable Gaussian blur with mirrored boundaries.
+    /// Uses pre-computed weights for sigma=1.2 (5x5 kernel).
+    /// This matches CPU butteraugli's blur_mirrored_5x5 for opsin dynamics.
+    pub fn blur_mirrored_5x5(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        temp: *mut f32,
+        width: usize,
+        height: usize,
+        w0: f32,  // center weight
+        w1: f32,  // 1-pixel offset weight
+        w2: f32,  // 2-pixel offset weight
+    ) {
+        // Horizontal pass: src -> temp (transposed)
+        unsafe {
+            self.blur_mirrored_5x5_h
+                .launch(
+                    &Self::launch_config_1d(width * height),
+                    stream,
+                    kernel_params!(src, temp, width, height, w0, w1, w2,),
+                )
+                .expect("blur_mirrored_5x5_h launch failed");
+        }
+        // Vertical pass: temp (transposed) -> dst
+        unsafe {
+            self.blur_mirrored_5x5_v
+                .launch(
+                    &Self::launch_config_1d(width * height),
+                    stream,
+                    kernel_params!(temp, dst, width, height, w0, w1, w2,),
+                )
+                .expect("blur_mirrored_5x5_v launch failed");
+        }
+    }
+
     /// Malta difference map (high frequency)
+    ///
+    /// Pre-computes Malta weights with f64 precision for better accuracy.
     pub fn malta_diff_map(
         &self,
         stream: &CuStream,
@@ -407,18 +485,33 @@ impl Kernel {
         w_0lt1: f32,
         norm1: f32,
     ) {
+        // Pre-compute Malta weights with f64 precision (matches CPU)
+        const MULLI_HF: f64 = 0.39905817637;
+        const K_WEIGHT0: f64 = 0.5;
+        const K_WEIGHT1: f64 = 0.33;
+        const LEN2: f64 = 3.75 * 2.0 + 1.0;
+
+        let w_0gt1_f64 = w_0gt1 as f64;
+        let w_0lt1_f64 = w_0lt1 as f64;
+        let norm1_f64 = norm1 as f64;
+
+        let norm2_0gt1 = (MULLI_HF * (K_WEIGHT0 * w_0gt1_f64).sqrt() / LEN2 * norm1_f64) as f32;
+        let norm2_0lt1 = (MULLI_HF * (K_WEIGHT1 * w_0lt1_f64).sqrt() / LEN2 * norm1_f64) as f32;
+
         unsafe {
             self.malta_diff_map
                 .launch(
                     &Self::launch_config_malta(width as u32, height as u32),
                     stream,
-                    kernel_params!(lum0, lum1, block_diff_ac, width, height, w_0gt1, w_0lt1, norm1,),
+                    kernel_params!(lum0, lum1, block_diff_ac, width, height, norm2_0gt1, norm2_0lt1, norm1,),
                 )
                 .expect("malta_diff_map launch failed");
         }
     }
 
     /// Malta difference map (low frequency)
+    ///
+    /// Pre-computes Malta weights with f64 precision for better accuracy.
     pub fn malta_diff_map_lf(
         &self,
         stream: &CuStream,
@@ -431,12 +524,25 @@ impl Kernel {
         w_0lt1: f32,
         norm1: f32,
     ) {
+        // Pre-compute Malta weights with f64 precision (matches CPU)
+        const MULLI_LF: f64 = 0.611612573796;
+        const K_WEIGHT0: f64 = 0.5;
+        const K_WEIGHT1: f64 = 0.33;
+        const LEN2: f64 = 3.75 * 2.0 + 1.0;
+
+        let w_0gt1_f64 = w_0gt1 as f64;
+        let w_0lt1_f64 = w_0lt1 as f64;
+        let norm1_f64 = norm1 as f64;
+
+        let norm2_0gt1 = (MULLI_LF * (K_WEIGHT0 * w_0gt1_f64).sqrt() / LEN2 * norm1_f64) as f32;
+        let norm2_0lt1 = (MULLI_LF * (K_WEIGHT1 * w_0lt1_f64).sqrt() / LEN2 * norm1_f64) as f32;
+
         unsafe {
             self.malta_diff_map_lf
                 .launch(
                     &Self::launch_config_malta(width as u32, height as u32),
                     stream,
-                    kernel_params!(lum0, lum1, block_diff_ac, width, height, w_0gt1, w_0lt1, norm1,),
+                    kernel_params!(lum0, lum1, block_diff_ac, width, height, norm2_0gt1, norm2_0lt1, norm1,),
                 )
                 .expect("malta_diff_map_lf launch failed");
         }
@@ -532,7 +638,7 @@ impl Kernel {
         }
     }
 
-    /// Add upsampled image to destination
+    /// Add upsampled image to destination with scale factor
     pub fn add_upsample_2x(
         &self,
         stream: &CuStream,
@@ -542,13 +648,14 @@ impl Kernel {
         src_height: usize,
         dst_width: usize,
         dst_height: usize,
+        scale: f32,
     ) {
         unsafe {
             self.add_upsample_2x
                 .launch(
                     &Self::launch_config_2d(dst_width as u32, dst_height as u32),
                     stream,
-                    kernel_params!(src, dst, src_width, src_height, dst_width, dst_height,),
+                    kernel_params!(dst, src, dst_width, dst_height, src_width, src_height, scale,),
                 )
                 .expect("add_upsample_2x launch failed");
         }
@@ -614,7 +721,9 @@ impl Kernel {
         }
     }
 
-    /// Separate HF and UHF bands (modifies both in place)
+    /// Separate HF and UHF bands for Y channel (modifies both in place)
+    /// Used after blur: hf = blur(HF_raw), uhf = HF_raw
+    /// After: hf = amplify(max_clamp(hf) * HF_MUL), uhf = max_clamp(uhf - max_clamp(hf)) * UHF_MUL
     pub fn separate_hf_uhf(
         &self,
         stream: &CuStream,
@@ -633,8 +742,93 @@ impl Kernel {
         }
     }
 
-    /// Initialize masking from HF and UHF bands
-    pub fn mask_init(
+    /// Subtract and remove range around zero
+    /// first = remove_range_around_zero(first, w)
+    /// second = second - first (original first value)
+    pub fn sub_remove_range(
+        &self,
+        stream: &CuStream,
+        first: *mut f32,
+        second: *mut f32,
+        size: usize,
+        w: f32,
+    ) {
+        unsafe {
+            self.sub_remove_range
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(first, second, size, w,),
+                )
+                .expect("sub_remove_range launch failed");
+        }
+    }
+
+    /// Subtract and amplify range around zero
+    /// first = amplify_range_around_zero(first, w)
+    /// second = second - first (original first value)
+    pub fn sub_amplify_range(
+        &self,
+        stream: &CuStream,
+        first: *mut f32,
+        second: *mut f32,
+        size: usize,
+        w: f32,
+    ) {
+        unsafe {
+            self.sub_amplify_range
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(first, second, size, w,),
+                )
+                .expect("sub_amplify_range launch failed");
+        }
+    }
+
+    /// Remove range around zero (standalone)
+    /// arr = remove_range_around_zero(arr, w)
+    pub fn remove_range(
+        &self,
+        stream: &CuStream,
+        arr: *mut f32,
+        size: usize,
+        w: f32,
+    ) {
+        unsafe {
+            self.remove_range
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(arr, size, w,),
+                )
+                .expect("remove_range launch failed");
+        }
+    }
+
+    /// Amplify range around zero (standalone)
+    /// arr = amplify_range_around_zero(arr, w)
+    pub fn amplify_range(
+        &self,
+        stream: &CuStream,
+        arr: *mut f32,
+        size: usize,
+        w: f32,
+    ) {
+        unsafe {
+            self.amplify_range
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(arr, size, w,),
+                )
+                .expect("amplify_range launch failed");
+        }
+    }
+
+    /// Combine HF and UHF channels for masking (single image)
+    /// Formula: sqrt((uhf_x + hf_x)² * 2.5² + (uhf_y * 0.4 + hf_y * 0.4)²)
+    pub fn combine_channels_for_masking(
         &self,
         stream: &CuStream,
         hf_x: *const f32,
@@ -645,13 +839,33 @@ impl Kernel {
         size: usize,
     ) {
         unsafe {
-            self.mask_init
+            self.combine_channels_for_masking
                 .launch(
                     &Self::launch_config_1d(size),
                     stream,
                     kernel_params!(hf_x, uhf_x, hf_y, uhf_y, dst, size,),
                 )
-                .expect("mask_init launch failed");
+                .expect("combine_channels_for_masking launch failed");
+        }
+    }
+
+    /// MaskToErrorMul: Add contribution from blurred UHF Y difference to block_diff_ac
+    pub fn mask_to_error_mul(
+        &self,
+        stream: &CuStream,
+        blurred1: *const f32,
+        blurred2: *const f32,
+        block_diff_ac: *mut f32,
+        size: usize,
+    ) {
+        unsafe {
+            self.mask_to_error_mul
+                .launch(
+                    &Self::launch_config_1d(size),
+                    stream,
+                    kernel_params!(blurred1, blurred2, block_diff_ac, size,),
+                )
+                .expect("mask_to_error_mul launch failed");
         }
     }
 
