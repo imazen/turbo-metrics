@@ -30,6 +30,41 @@ pub trait Sum<S: Sample, C: Channels> {
     }
 }
 
+impl<T: Img<f32, C<1>>> Sum<f32, C<1>> for T {
+    type SumResult = f64;
+
+    fn sum_into(
+        &self,
+        scratch: &mut ScratchBuffer,
+        out: &mut Self::SumResult,
+        ctx: NppStreamContext,
+    ) -> Result<()> {
+        let out_dev = ScratchBuffer::alloc::<f64>(ctx.hStream)?;
+        unsafe {
+            nppiSum_32f_C1R_Ctx(
+                self.device_ptr(),
+                self.pitch(),
+                self.size(),
+                scratch.ptr.cast(),
+                out_dev.ptr.cast(),
+                ctx,
+            )
+            .result()?;
+        }
+
+        out_dev.copy_to_cpu(out, ctx.hStream)?;
+        // This alloc will be freed asynchronously
+        out_dev.manual_drop(ctx.hStream)?;
+
+        Ok(())
+    }
+
+    fn sum_scratch_size(&self) -> Result<usize> {
+        let mut size = 0;
+        unsafe { nppiSumGetBufferHostSize_32f_C1R(self.size(), &mut size).result_with(size) }
+    }
+}
+
 impl<T: Img<f32, C<3>>> Sum<f32, C<3>> for T {
     type SumResult = [f64; 3];
 

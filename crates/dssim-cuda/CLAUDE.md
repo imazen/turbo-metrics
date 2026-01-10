@@ -6,9 +6,10 @@ GPU implementation of the DSSIM image quality metric, following the ssimulacra2-
 
 ## Current Status
 
-**Phase 1: Kernel Crate Setup** - Complete (13 kernels compiled)
+**Phase 1: Kernel Crate Setup** - Complete (14 kernels compiled)
 **Phase 2: Host Crate Pipeline** - Complete (builds and runs)
 **Phase 3: Accuracy Validation** - Complete (all tests passing with <0.1% error)
+**Phase 4: Performance Optimization** - Complete (full GPU pipeline)
 
 ### Test Results (2026-01-08)
 
@@ -16,9 +17,24 @@ GPU implementation of the DSSIM image quality metric, following the ssimulacra2-
 |------|-----|-----|-------|--------|
 | Identical images | 0.000000 | 0.000000 | 0% | PASS |
 | Very different | 0.541865 | 0.541830 | 0.006% | PASS |
-| Slightly different | 0.014610 | 0.014604 | 0.04% | PASS |
+| Slightly different | 0.014610 | 0.014605 | 0.04% | PASS |
+| JPEG q90 | 0.000250 | 0.000250 | <0.01% | PASS |
+| JPEG q70 | 0.001163 | 0.001164 | 0.09% | PASS |
+| JPEG q45 | 0.002156 | 0.002156 | <0.01% | PASS |
+| JPEG q20 | 0.003925 | 0.003923 | 0.05% | PASS |
 
 All tests pass with strict tolerances (< 1% for subtle differences, < 0.1% for large differences).
+
+### Performance Benchmarks (Release Build)
+
+| Resolution | Time/Image | Throughput |
+|------------|------------|------------|
+| 256x256 | 3.66 ms | 273 images/sec |
+| 512x512 | 2.96 ms | 338 images/sec |
+| 1024x768 | 3.04 ms | 329 images/sec |
+| 1920x1080 | 3.68 ms | 272 images/sec |
+
+Optimization: Full SSIM computation on GPU with NPP sum reduction (no large buffer downloads).
 
 ## Architecture
 
@@ -78,12 +94,13 @@ const C2: f32 = 0.0009;  // 0.03^2
 - `src/downscale.rs` - 2x downsampling for planes and RGB
 - `src/lab.rs` - Linear RGB to LAB conversion
 - `src/blur.rs` - 3x3 Gaussian blur + fused operations (blur_squared, blur_product)
-- `src/ssim.rs` - Per-pixel SSIM computation
+- `src/ssim.rs` - Per-pixel SSIM computation (compute_ssim, compute_ssim_lab, compute_abs_diff_scalar)
 
 ### Host Crate (dssim-cuda)
 - `src/lib.rs` - Dssim struct with multi-scale pipeline
 - `src/kernel.rs` - Kernel launch wrappers
 - `tests/accuracy.rs` - CPU parity tests with strict tolerances
+- `tests/benchmark.rs` - Performance benchmarks
 
 ## Discoveries & Notes
 
@@ -107,6 +124,10 @@ const C2: f32 = 0.0009;  // 0.03^2
 - Score formula: dssim-core uses mean absolute deviation, not simple average
 - Stats averaging: dssim-core averages LAB stats BEFORE computing SSIM, not after
 - **Test bug (2026-01-08)**: Original test passed gamma-encoded sRGB values to dssim-core instead of using `ToRGBAPLU::to_rgblu()` for proper linearization. This caused apparent 40%+ error that was actually a test bug, not an implementation bug.
+
+## Discoveries
+
+- **Sync-before-drop crash prevention**: CUDA cleanup can crash if GPU buffers are freed while operations are still pending on a stream. The `Dssim` struct now implements `Drop` that calls `cudarse_driver::sync_ctx()` to synchronize the entire CUDA context before buffers are dropped. This pattern was discovered in glassa (which worked around it with `std::process::exit(0)` at function end).
 
 ## Build Notes
 
@@ -136,4 +157,8 @@ CUDA_PATH=/usr/local/cuda-12.6 cargo test -p dssim-cuda --test accuracy -- --noc
 - [x] Implement chroma pre-blur
 - [x] Achieve <1% accuracy on all tests
 - [x] Remove unused temp2 buffer
+- [x] GPU SSIM computation (compute_ssim_lab kernel)
+- [x] GPU MAD computation (compute_abs_diff_scalar kernel)
+- [x] NPP Sum reduction (replace CPU computation)
+- [x] Sync-before-drop crash prevention (Drop impl calls sync_ctx)
 - [ ] Precompute API (future optimization)

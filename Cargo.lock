@@ -217,9 +217,12 @@ dependencies = [
  "butteraugli",
  "cudarse-driver",
  "cudarse-npp",
+ "imgref",
  "indices",
  "nvptx-builder",
+ "rgb",
  "sha2",
+ "zune-core",
  "zune-image",
 ]
 

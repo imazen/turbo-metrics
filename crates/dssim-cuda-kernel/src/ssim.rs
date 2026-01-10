@@ -147,32 +147,116 @@ pub unsafe extern "ptx-kernel" fn compute_ssim_precomputed_ref(
     }
 }
 
-/// Sum all elements in a plane (for computing mean SSIM).
+/// Compute SSIM from LAB channel statistics, averaging across channels.
 ///
-/// Uses tree reduction within blocks, then atomic add to global sum.
-/// Should be called with enough threads to cover the image.
+/// This matches dssim-core's approach where L, a, b statistics are averaged
+/// before computing the SSIM formula.
+///
+/// Takes 15 input buffers (5 statistics × 3 channels) and produces single SSIM map.
 #[no_mangle]
-pub unsafe extern "ptx-kernel" fn reduce_sum(
-    src: *const f32,
-    src_pitch: usize,
+pub unsafe extern "ptx-kernel" fn compute_ssim_lab(
+    // Reference mu (L, a, b)
+    mu1_l: *const f32,
+    mu1_a: *const f32,
+    mu1_b: *const f32,
+    mu1_pitch: usize,
+    // Distorted mu (L, a, b)
+    mu2_l: *const f32,
+    mu2_a: *const f32,
+    mu2_b: *const f32,
+    mu2_pitch: usize,
+    // Reference blur(img²) (L, a, b)
+    sq1_l: *const f32,
+    sq1_a: *const f32,
+    sq1_b: *const f32,
+    sq1_pitch: usize,
+    // Distorted blur(img²) (L, a, b)
+    sq2_l: *const f32,
+    sq2_a: *const f32,
+    sq2_b: *const f32,
+    sq2_pitch: usize,
+    // Cross blur(img1*img2) (L, a, b)
+    cross_l: *const f32,
+    cross_a: *const f32,
+    cross_b: *const f32,
+    cross_pitch: usize,
+    // Output
+    ssim_out: *mut f32,
+    ssim_out_pitch: usize,
     width: usize,
     height: usize,
-    output: *mut f32, // Single value output (must be initialized to 0)
 ) {
     let (x, y) = coords_2d();
 
-    // Each thread loads one value (or 0 if out of bounds)
-    let val = if x < width && y < height {
-        *src.byte_add(y * src_pitch).add(x)
-    } else {
-        0.0
-    };
+    if x < width && y < height {
+        // Load all values
+        let m1_l = *mu1_l.byte_add(y * mu1_pitch).add(x);
+        let m1_a = *mu1_a.byte_add(y * mu1_pitch).add(x);
+        let m1_b = *mu1_b.byte_add(y * mu1_pitch).add(x);
 
-    // Warp-level reduction
-    let warp_sum = warp_sum_f32(val);
+        let m2_l = *mu2_l.byte_add(y * mu2_pitch).add(x);
+        let m2_a = *mu2_a.byte_add(y * mu2_pitch).add(x);
+        let m2_b = *mu2_b.byte_add(y * mu2_pitch).add(x);
 
-    // First thread in warp atomically adds to global sum
-    if lane() == 0 {
-        atomic_add_global_f32(output, warp_sum);
+        let s1_l = *sq1_l.byte_add(y * sq1_pitch).add(x);
+        let s1_a = *sq1_a.byte_add(y * sq1_pitch).add(x);
+        let s1_b = *sq1_b.byte_add(y * sq1_pitch).add(x);
+
+        let s2_l = *sq2_l.byte_add(y * sq2_pitch).add(x);
+        let s2_a = *sq2_a.byte_add(y * sq2_pitch).add(x);
+        let s2_b = *sq2_b.byte_add(y * sq2_pitch).add(x);
+
+        let c_l = *cross_l.byte_add(y * cross_pitch).add(x);
+        let c_a = *cross_a.byte_add(y * cross_pitch).add(x);
+        let c_b = *cross_b.byte_add(y * cross_pitch).add(x);
+
+        // Average mu products across channels (like dssim-core)
+        let mu1_sq = (m1_l * m1_l + m1_a * m1_a + m1_b * m1_b) * (1.0 / 3.0);
+        let mu2_sq = (m2_l * m2_l + m2_a * m2_a + m2_b * m2_b) * (1.0 / 3.0);
+        let mu1_mu2 = (m1_l * m2_l + m1_a * m2_a + m1_b * m2_b) * (1.0 / 3.0);
+
+        // Average blur(img²) across channels
+        let img1_sq_blur = (s1_l + s1_a + s1_b) * (1.0 / 3.0);
+        let img2_sq_blur = (s2_l + s2_a + s2_b) * (1.0 / 3.0);
+        let img12_blur = (c_l + c_a + c_b) * (1.0 / 3.0);
+
+        // Compute sigma values
+        let sigma1_sq = img1_sq_blur - mu1_sq;
+        let sigma2_sq = img2_sq_blur - mu2_sq;
+        let sigma12 = img12_blur - mu1_mu2;
+
+        // SSIM formula
+        let num1 = 2.0f32.mul_add(mu1_mu2, C1);
+        let num2 = 2.0f32.mul_add(sigma12, C2);
+        let numerator = num1 * num2;
+
+        let den1 = mu1_sq + mu2_sq + C1;
+        let den2 = sigma1_sq + sigma2_sq + C2;
+        let denominator = den1 * den2;
+
+        let ssim = numerator / denominator;
+        *ssim_out.byte_add(y * ssim_out_pitch).add(x) = ssim;
+    }
+}
+
+/// Compute |scalar - value| for each pixel (for MAD computation).
+///
+/// Used to compute the Mean Absolute Deviation from the average SSIM.
+#[no_mangle]
+pub unsafe extern "ptx-kernel" fn compute_abs_diff_scalar(
+    src: *const f32,
+    src_pitch: usize,
+    dst: *mut f32,
+    dst_pitch: usize,
+    scalar: f32, // The value to subtract (avg)
+    width: usize,
+    height: usize,
+) {
+    let (x, y) = coords_2d();
+
+    if x < width && y < height {
+        let val = *src.byte_add(y * src_pitch).add(x);
+        let abs_diff = (scalar - val).abs();
+        *dst.byte_add(y * dst_pitch).add(x) = abs_diff;
     }
 }

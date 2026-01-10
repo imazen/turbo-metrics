@@ -33,6 +33,17 @@ The GPU implementation now achieves **near-perfect parity** with the CPU referen
 | Q70 | 4.9217 | 4.8606 | 1.24% |
 | Q45 | 5.7672 | 5.7604 | 0.12% |
 | Q20 | 12.1209 | 12.0146 | 0.88% |
+| Q5 | 19.5370 | 18.9820 | 2.84% |
+| Q1 | 28.6796 | 28.4422 | 0.83% |
+
+### Kodak Corpus Tests (768x512 / 512x768)
+| Image | Size | CPU Score | GPU Score | Error |
+|-------|------|-----------|-----------|-------|
+| 4.png | 512x768 | 11.6439 | 11.6302 | 0.12% |
+| 5.png | 768x512 | 11.0593 | 11.0250 | 0.31% |
+| 12.png | 768x512 | 17.4081 | 17.4342 | 0.15% |
+
+These tests use Q1-like extreme quantization (8 levels). Originally expected 15-18% variance but achieved <0.5% after L2DiffAsymmetric and f64 precision fixes.
 
 ### Stage-Level Parity (256x256 Q70)
 All frequency band stages now achieve near-perfect parity (RMSE < 0.0001):
@@ -164,12 +175,14 @@ CUDA_PATH=/usr/local/cuda-12.6 cargo test --release -p butteraugli-cuda -- --noc
 
 ## Remaining Known Issues
 
-The remaining ~1% error on JPEG tests (with Q45 at 0.14%) is likely caused by:
-1. **Float Precision** - Minor differences in GPU f32 vs CPU f64 arithmetic in some calculations
+The remaining ~1% error on most JPEG tests is acceptable for a GPU implementation. Sources:
+1. **Float Precision** - Minor differences in GPU f32 vs CPU f64 arithmetic (documented: NVIDIA CUDA floating-point differences)
 2. **Malta Filter Boundary Handling** - Small differences in how zero-padding interacts with filter patterns
 3. **Multi-scale Interactions** - Small differences compound across full-res and half-res pipelines
 
-All tests pass and accuracy is excellent for a GPU implementation. Q45 achieves 0.14% error, close to theoretical parity.
+The Q5 test shows 2.84% error - the highest variance is at extreme distortion levels where absolute score differences are less perceptually meaningful.
+
+All 11 accuracy tests pass. Best parity: Q45 at 0.12%, Kodak images at 0.12-0.31%.
 
 ## Usage Notes - Stream Synchronization
 

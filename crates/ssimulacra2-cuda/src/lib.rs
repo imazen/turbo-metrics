@@ -623,6 +623,15 @@ impl Ssimulacra2 {
     }
 }
 
+impl Drop for Ssimulacra2 {
+    fn drop(&mut self) {
+        // Sync the CUDA context before dropping GPU buffers to prevent crashes.
+        // Without this, pending operations may still reference buffers being freed.
+        // This pattern was discovered in glassa when CUDA crashes occurred during cleanup.
+        let _ = cudarse_driver::sync_ctx();
+    }
+}
+
 /*
 fn save_img(img: impl Img<f32, C<3>>, name: &str, stream: cudaStream_t) {
     // dev.synchronize().unwrap();

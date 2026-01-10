@@ -14,7 +14,7 @@ license = "MIT"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-nvptx-std = { workspace = true }
+nvptx-std = { workspace = true, features = ["minimal-panic"] }
 
 [build-dependencies]
 nvptx-builder = { workspace = true }

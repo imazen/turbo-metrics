@@ -22,8 +22,18 @@ mod kernel;
 
 use cudarse_driver::sys::CuError;
 use cudarse_driver::CuStream;
+use cudarse_npp::image::ist::Sum;
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, C};
+use cudarse_npp::image::{Image, C};
+use cudarse_npp::sys::NppStreamContext;
+use cudarse_npp::{set_stream, ScratchBuffer};
+
+/// Get NPP stream context for the given CUDA stream.
+/// Sets the stream globally for NPP and returns the context.
+fn get_stream_ctx_for(stream: &CuStream) -> Result<NppStreamContext> {
+    set_stream(stream.inner() as _)?;
+    cudarse_npp::get_stream_ctx().map_err(Error::from)
+}
 
 pub use kernel::Kernel;
 
@@ -110,6 +120,9 @@ struct ScaleBuffers {
 
     // Temporary buffer for blur operations
     temp1: Image<f32, C<1>>,
+
+    // SSIM output map (computed on GPU)
+    ssim_map: Image<f32, C<1>>,
 }
 
 impl ScaleBuffers {
@@ -148,6 +161,8 @@ impl ScaleBuffers {
             cross_blur_b: Image::malloc(width, height)?,
             // Temporary buffer
             temp1: Image::malloc(width, height)?,
+            // SSIM output map
+            ssim_map: Image::malloc(width, height)?,
         })
     }
 
@@ -161,13 +176,15 @@ pub struct Dssim {
     kernel: Kernel,
     /// Buffers for each scale (includes RGB at each scale)
     scales: [ScaleBuffers; NUM_SCALES],
+    /// Scratch buffer for NPP sum operation
+    sum_scratch: ScratchBuffer,
 }
 
 impl Dssim {
     /// Create a new DSSIM computation context for the given image dimensions.
     ///
     /// Allocates all necessary GPU buffers for the multi-scale pipeline.
-    pub fn new(width: u32, height: u32, _stream: &CuStream) -> Result<Self> {
+    pub fn new(width: u32, height: u32, stream: &CuStream) -> Result<Self> {
         let kernel = Kernel::load();
 
         // Allocate per-scale buffers
@@ -187,7 +204,15 @@ impl Dssim {
             buffers
         })?;
 
-        Ok(Self { kernel, scales })
+        // Allocate scratch buffer for NPP sum (sized for largest scale)
+        let ctx = get_stream_ctx_for(stream)?;
+        let sum_scratch = scales[0].ssim_map.sum_alloc_scratch(ctx)?;
+
+        Ok(Self {
+            kernel,
+            scales,
+            sum_scratch,
+        })
     }
 
     /// Compute DSSIM score between two sRGB images (synchronous).
@@ -284,7 +309,7 @@ impl Dssim {
     /// Returns the score for this scale using dssim-core's formula.
     fn process_scale(&mut self, scale: usize, stream: &CuStream) -> Result<f64> {
         let s = &mut self.scales[scale];
-        let pixel_count = s.pixel_count();
+        let pixel_count = s.pixel_count() as f64;
 
         // dssim-core applies blur TWICE (two-pass Gaussian)
         // Note: chroma channels are already pre-blurred above
@@ -330,75 +355,54 @@ impl Dssim {
             .blur_product(stream, &s.ref_b, &s.dis_b, &mut s.temp1);
         self.kernel.blur_3x3(stream, &s.temp1, &mut s.cross_blur_b);
 
-        // Sync and download statistics
+        // Compute per-pixel SSIM on GPU (all 15 inputs -> 1 output)
+        self.kernel.compute_ssim_lab(
+            stream,
+            &s.ref_mu_l,
+            &s.ref_mu_a,
+            &s.ref_mu_b,
+            &s.dis_mu_l,
+            &s.dis_mu_a,
+            &s.dis_mu_b,
+            &s.ref_sq_blur_l,
+            &s.ref_sq_blur_a,
+            &s.ref_sq_blur_b,
+            &s.dis_sq_blur_l,
+            &s.dis_sq_blur_a,
+            &s.dis_sq_blur_b,
+            &s.cross_blur_l,
+            &s.cross_blur_a,
+            &s.cross_blur_b,
+            &mut s.ssim_map,
+        );
+
+        // Sum SSIM values on GPU using NPP
+        let ctx = get_stream_ctx_for(stream)?;
+        let mut ssim_sum: f64 = 0.0;
+        s.ssim_map
+            .sum_into(&mut self.sum_scratch, &mut ssim_sum, ctx)?;
+
+        // Wait for sum to complete and compute mean_ssim
         stream.sync().map_err(Error::Cuda)?;
+        let mean_ssim = ssim_sum / pixel_count;
 
-        // Download all statistics to CPU for proper SSIM computation
-        let mu1_l = s.ref_mu_l.copy_to_cpu(stream.inner() as _)?;
-        let mu1_a = s.ref_mu_a.copy_to_cpu(stream.inner() as _)?;
-        let mu1_b = s.ref_mu_b.copy_to_cpu(stream.inner() as _)?;
-        let mu2_l = s.dis_mu_l.copy_to_cpu(stream.inner() as _)?;
-        let mu2_a = s.dis_mu_a.copy_to_cpu(stream.inner() as _)?;
-        let mu2_b = s.dis_mu_b.copy_to_cpu(stream.inner() as _)?;
-
-        let sq1_l = s.ref_sq_blur_l.copy_to_cpu(stream.inner() as _)?;
-        let sq1_a = s.ref_sq_blur_a.copy_to_cpu(stream.inner() as _)?;
-        let sq1_b = s.ref_sq_blur_b.copy_to_cpu(stream.inner() as _)?;
-        let sq2_l = s.dis_sq_blur_l.copy_to_cpu(stream.inner() as _)?;
-        let sq2_a = s.dis_sq_blur_a.copy_to_cpu(stream.inner() as _)?;
-        let sq2_b = s.dis_sq_blur_b.copy_to_cpu(stream.inner() as _)?;
-
-        let cross_l = s.cross_blur_l.copy_to_cpu(stream.inner() as _)?;
-        let cross_a = s.cross_blur_a.copy_to_cpu(stream.inner() as _)?;
-        let cross_b = s.cross_blur_b.copy_to_cpu(stream.inner() as _)?;
-
-        stream.sync().map_err(Error::Cuda)?;
-
-        // SSIM constants
-        const C1: f32 = 0.0001; // 0.01^2
-        const C2: f32 = 0.0009; // 0.03^2
-
-        // Compute per-pixel SSIM using dssim-core's approach:
-        // Average the L,a,b statistics before computing SSIM
-        let mut ssim_map = Vec::with_capacity(pixel_count);
-
-        for i in 0..pixel_count {
-            // Compute mu products (averaging component-wise products like dssim-core)
-            let mu1_sq = (mu1_l[i] * mu1_l[i] + mu1_a[i] * mu1_a[i] + mu1_b[i] * mu1_b[i]) / 3.0;
-            let mu2_sq = (mu2_l[i] * mu2_l[i] + mu2_a[i] * mu2_a[i] + mu2_b[i] * mu2_b[i]) / 3.0;
-            let mu1_mu2 = (mu1_l[i] * mu2_l[i] + mu1_a[i] * mu2_a[i] + mu1_b[i] * mu2_b[i]) / 3.0;
-
-            // Average blur(img^2) and blur(img1*img2) across channels
-            let img1_sq_blur = (sq1_l[i] + sq1_a[i] + sq1_b[i]) / 3.0;
-            let img2_sq_blur = (sq2_l[i] + sq2_a[i] + sq2_b[i]) / 3.0;
-            let img12_blur = (cross_l[i] + cross_a[i] + cross_b[i]) / 3.0;
-
-            // Compute sigma values
-            let sigma1_sq = img1_sq_blur - mu1_sq;
-            let sigma2_sq = img2_sq_blur - mu2_sq;
-            let sigma12 = img12_blur - mu1_mu2;
-
-            // SSIM formula
-            let ssim = (2.0 * mu1_mu2 + C1) * (2.0 * sigma12 + C2)
-                / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2));
-
-            ssim_map.push(ssim);
-        }
-
-        // Compute score using dssim-core's formula:
-        // avg = mean(ssim)^(0.5^scale_index)
-        // score = 1 - mean(|avg - ssim_i|)
-        let sum: f64 = ssim_map.iter().map(|&x| x as f64).sum();
-        let len = pixel_count as f64;
-        let mean_ssim = sum / len;
+        // Compute avg = mean(ssim)^(0.5^scale_index)
         let avg = mean_ssim.max(0.0).powf(0.5_f64.powi(scale as i32));
 
-        let mad: f64 = ssim_map
-            .iter()
-            .map(|&x| (avg - x as f64).abs())
-            .sum::<f64>()
-            / len;
+        // Compute |avg - ssim_i| on GPU (reuse temp1 buffer for output)
+        self.kernel
+            .compute_abs_diff_scalar(stream, &s.ssim_map, &mut s.temp1, avg as f32);
 
+        // Sum the absolute differences to get MAD sum
+        let mut mad_sum: f64 = 0.0;
+        s.temp1
+            .sum_into(&mut self.sum_scratch, &mut mad_sum, ctx)?;
+
+        // Wait for sum to complete
+        stream.sync().map_err(Error::Cuda)?;
+
+        // Compute final score: 1 - mean(|avg - ssim_i|)
+        let mad = mad_sum / pixel_count;
         let score = 1.0 - mad;
 
         Ok(score)
@@ -411,8 +415,8 @@ impl Dssim {
             .iter()
             .map(|s| {
                 let pixels = s.width as usize * s.height as usize;
-                // 2 RGB buffers (3 channels each) + 24 f32 planar buffers + 1 temp buffer
-                pixels * 4 * (2 * 3 + 24 + 1)
+                // 2 RGB buffers (3 channels each) + 24 f32 planar buffers + 2 temp buffers (temp1 + ssim_map)
+                pixels * 4 * (2 * 3 + 24 + 2)
             })
             .sum();
 
@@ -423,4 +427,13 @@ impl Dssim {
 /// Convert SSIM (0-1, higher is better) to DSSIM (0+, lower is better)
 fn ssim_to_dssim(ssim: f64) -> f64 {
     1.0 / ssim.max(f64::EPSILON) - 1.0
+}
+
+impl Drop for Dssim {
+    fn drop(&mut self) {
+        // Sync the CUDA context before dropping GPU buffers to prevent crashes.
+        // Without this, pending operations may still reference buffers being freed.
+        // This pattern was discovered in glassa when CUDA crashes occurred during cleanup.
+        let _ = cudarse_driver::sync_ctx();
+    }
 }

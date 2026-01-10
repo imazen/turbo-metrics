@@ -18,7 +18,8 @@ pub struct Kernel {
     multiply: CuFunction,
     compute_ssim: CuFunction,
     compute_ssim_precomputed_ref: CuFunction,
-    reduce_sum: CuFunction,
+    compute_ssim_lab: CuFunction,
+    compute_abs_diff_scalar: CuFunction,
 }
 
 impl Kernel {
@@ -45,7 +46,10 @@ impl Kernel {
             compute_ssim_precomputed_ref: module
                 .function_by_name("compute_ssim_precomputed_ref")
                 .unwrap(),
-            reduce_sum: module.function_by_name("reduce_sum").unwrap(),
+            compute_ssim_lab: module.function_by_name("compute_ssim_lab").unwrap(),
+            compute_abs_diff_scalar: module
+                .function_by_name("compute_abs_diff_scalar")
+                .unwrap(),
             _module: module,
         }
     }
@@ -395,29 +399,100 @@ impl Kernel {
         }
     }
 
-    /// Sum all elements in a plane (for computing mean SSIM)
-    pub fn reduce_sum(
+    /// Compute per-pixel SSIM from LAB channel statistics, averaging across channels.
+    ///
+    /// Takes 15 input buffers (5 statistics × 3 channels) and produces single SSIM map.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_ssim_lab(
+        &self,
+        stream: &CuStream,
+        // Reference mu (L, a, b)
+        mu1_l: impl Img<f32, C<1>>,
+        mu1_a: impl Img<f32, C<1>>,
+        mu1_b: impl Img<f32, C<1>>,
+        // Distorted mu (L, a, b)
+        mu2_l: impl Img<f32, C<1>>,
+        mu2_a: impl Img<f32, C<1>>,
+        mu2_b: impl Img<f32, C<1>>,
+        // Reference blur(img²) (L, a, b)
+        sq1_l: impl Img<f32, C<1>>,
+        sq1_a: impl Img<f32, C<1>>,
+        sq1_b: impl Img<f32, C<1>>,
+        // Distorted blur(img²) (L, a, b)
+        sq2_l: impl Img<f32, C<1>>,
+        sq2_a: impl Img<f32, C<1>>,
+        sq2_b: impl Img<f32, C<1>>,
+        // Cross blur(img1*img2) (L, a, b)
+        cross_l: impl Img<f32, C<1>>,
+        cross_a: impl Img<f32, C<1>>,
+        cross_b: impl Img<f32, C<1>>,
+        // Output
+        mut ssim_out: impl ImgMut<f32, C<1>>,
+    ) {
+        let width = mu1_l.width();
+        let height = mu1_l.height();
+        unsafe {
+            self.compute_ssim_lab
+                .launch(
+                    &launch_config_2d(width, height),
+                    stream,
+                    kernel_params!(
+                        mu1_l.device_ptr(),
+                        mu1_a.device_ptr(),
+                        mu1_b.device_ptr(),
+                        mu1_l.pitch() as usize,
+                        mu2_l.device_ptr(),
+                        mu2_a.device_ptr(),
+                        mu2_b.device_ptr(),
+                        mu2_l.pitch() as usize,
+                        sq1_l.device_ptr(),
+                        sq1_a.device_ptr(),
+                        sq1_b.device_ptr(),
+                        sq1_l.pitch() as usize,
+                        sq2_l.device_ptr(),
+                        sq2_a.device_ptr(),
+                        sq2_b.device_ptr(),
+                        sq2_l.pitch() as usize,
+                        cross_l.device_ptr(),
+                        cross_a.device_ptr(),
+                        cross_b.device_ptr(),
+                        cross_l.pitch() as usize,
+                        ssim_out.device_ptr_mut(),
+                        ssim_out.pitch() as usize,
+                        width as usize,
+                        height as usize,
+                    ),
+                )
+                .expect("Could not launch compute_ssim_lab kernel");
+        }
+    }
+
+    /// Compute |scalar - value| for each pixel (for MAD computation).
+    pub fn compute_abs_diff_scalar(
         &self,
         stream: &CuStream,
         src: impl Img<f32, C<1>>,
-        output: *mut f32, // Device pointer to single f32, must be initialized to 0
+        mut dst: impl ImgMut<f32, C<1>>,
+        scalar: f32,
     ) {
         let width = src.width();
         let height = src.height();
         unsafe {
-            self.reduce_sum
+            self.compute_abs_diff_scalar
                 .launch(
                     &launch_config_2d(width, height),
                     stream,
                     kernel_params!(
                         src.device_ptr(),
                         src.pitch() as usize,
+                        dst.device_ptr_mut(),
+                        dst.pitch() as usize,
+                        scalar,
                         width as usize,
                         height as usize,
-                        output,
                     ),
                 )
-                .expect("Could not launch reduce_sum kernel");
+                .expect("Could not launch compute_abs_diff_scalar kernel");
         }
     }
 }

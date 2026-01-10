@@ -171,9 +171,14 @@ impl<T: ?Sized> Drop for CuBox<T> {
 }
 
 /// No guarantees this is used correctly. Beware of pinning multiple times.
-pub struct CuPin<C: Deref<Target: ?Sized>>(C);
+pub struct CuPin<C, T: ?Sized = <C as Deref>::Target>(C, std::marker::PhantomData<T>)
+where
+    C: Deref<Target = T>;
 
-impl<C: Deref<Target: ?Sized>> CuPin<C> {
+impl<C, T: ?Sized> CuPin<C, T>
+where
+    C: Deref<Target = T>,
+{
     pub fn new(data: C) -> CuResult<Self> {
         Self::new_flags(data, 0)
     }
@@ -187,7 +192,7 @@ impl<C: Deref<Target: ?Sized>> CuPin<C> {
             )
             .result()?;
         }
-        Ok(Self(data))
+        Ok(Self(data, std::marker::PhantomData))
     }
 
     fn drop_inner(&mut self) -> CuResult<()> {
@@ -195,13 +200,19 @@ impl<C: Deref<Target: ?Sized>> CuPin<C> {
     }
 }
 
-impl<C: Deref<Target: ?Sized>> Drop for CuPin<C> {
+impl<C, T: ?Sized> Drop for CuPin<C, T>
+where
+    C: Deref<Target = T>,
+{
     fn drop(&mut self) {
         self.drop_inner().unwrap()
     }
 }
 
-impl<T: ?Sized, C: Deref<Target = T>> Deref for CuPin<C> {
+impl<C, T: ?Sized> Deref for CuPin<C, T>
+where
+    C: Deref<Target = T>,
+{
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -209,7 +220,10 @@ impl<T: ?Sized, C: Deref<Target = T>> Deref for CuPin<C> {
     }
 }
 
-impl<T: ?Sized, C: DerefMut<Target = T>> DerefMut for CuPin<C> {
+impl<C, T: ?Sized> DerefMut for CuPin<C, T>
+where
+    C: DerefMut<Target = T>,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.0.deref_mut()
     }
