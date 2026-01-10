@@ -1,5 +1,4 @@
 use crate::{sys, CuStream};
-use std::borrow::Borrow;
 use std::mem;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
@@ -16,7 +15,7 @@ impl<T: Sized> CuBox<[T]> {
             sys::cuMemcpyHtoDAsync_v2(
                 s.ptr(),
                 t.as_ptr() as _,
-                t.len() * size_of::<T>(),
+                std::mem::size_of_val(t),
                 stream.raw(),
             )
             .result()?;

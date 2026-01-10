@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err, clippy::result_unit_err)]
+
 use std::fmt::{Display, Formatter};
 
 pub mod av1;

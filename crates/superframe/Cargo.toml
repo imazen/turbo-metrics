@@ -5,7 +5,7 @@ authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
-rust-version = "1.77"
+rust-version = "1.92"
 
 [dependencies]
 array-init = { workspace = true }

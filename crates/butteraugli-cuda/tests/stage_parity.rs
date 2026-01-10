@@ -7,11 +7,11 @@
 
 use butteraugli::blur::{compute_kernel, gaussian_blur};
 use butteraugli::image::{Image3F, ImageF};
-use butteraugli::opsin::{srgb_to_linear, opsin_dynamics_image};
-use butteraugli::psycho::separate_frequencies;
 use butteraugli::malta::malta_diff_map;
 use butteraugli::mask::{combine_channels_for_masking, compute_mask};
-use butteraugli::{ButteraugliParams, compute_butteraugli};
+use butteraugli::opsin::{opsin_dynamics_image, srgb_to_linear};
+use butteraugli::psycho::separate_frequencies;
+use butteraugli::{compute_butteraugli, ButteraugliParams};
 use butteraugli_cuda::Butteraugli;
 use cudarse_driver::{CuBox, CuStream};
 use cudarse_npp::image::isu::Malloc;
@@ -128,7 +128,11 @@ fn compare_buffers(cpu: &[f32], gpu: &[f32], name: &str) -> CompareResult {
 
     for (i, (&c, &g)) in cpu.iter().zip(gpu.iter()).enumerate() {
         let abs_err = (c - g).abs();
-        let rel_err = if c.abs() > 1e-6 { abs_err / c.abs() } else { abs_err };
+        let rel_err = if c.abs() > 1e-6 {
+            abs_err / c.abs()
+        } else {
+            abs_err
+        };
 
         sum_sq_err += (abs_err as f64).powi(2);
 
@@ -168,12 +172,21 @@ struct CompareResult {
 
 impl CompareResult {
     fn print(&self) {
-        println!("  {}: max_abs={:.6}, max_rel={:.2}%, rmse={:.6}",
-            self.name, self.max_abs_err, self.max_rel_err * 100.0, self.rmse);
+        println!(
+            "  {}: max_abs={:.6}, max_rel={:.2}%, rmse={:.6}",
+            self.name,
+            self.max_abs_err,
+            self.max_rel_err * 100.0,
+            self.rmse
+        );
         if self.max_abs_err > 0.01 {
-            println!("    worst@{}: CPU={:.6}, GPU={:.6}, diff={:.6}",
-                self.worst_idx, self.worst_cpu, self.worst_gpu,
-                self.worst_cpu - self.worst_gpu);
+            println!(
+                "    worst@{}: CPU={:.6}, GPU={:.6}, diff={:.6}",
+                self.worst_idx,
+                self.worst_cpu,
+                self.worst_gpu,
+                self.worst_cpu - self.worst_gpu
+            );
         }
     }
 
@@ -203,7 +216,12 @@ fn upload_flat(ctx: &CudaContext, data: &[f32]) -> CuBox<[f32]> {
 }
 
 /// Download GPU planar buffer to Vec
-fn download_planar(ctx: &CudaContext, gpu_buf: &CuBox<[f32]>, width: usize, height: usize) -> Vec<f32> {
+fn download_planar(
+    ctx: &CudaContext,
+    gpu_buf: &CuBox<[f32]>,
+    width: usize,
+    height: usize,
+) -> Vec<f32> {
     ctx.stream.sync().expect("Failed to sync");
     let size = width * height;
     let mut cpu_data = vec![0.0f32; size];
@@ -212,7 +230,9 @@ fn download_planar(ctx: &CudaContext, gpu_buf: &CuBox<[f32]>, width: usize, heig
             cpu_data.as_mut_ptr() as *mut _,
             gpu_buf.ptr(),
             size * 4,
-        ).result().expect("Failed to download");
+        )
+        .result()
+        .expect("Failed to download");
     }
     cpu_data
 }
@@ -267,17 +287,23 @@ fn test_blur_parity() {
                 gpu_src.ptr() as *const f32,
                 gpu_dst.ptr() as *mut f32,
                 gpu_temp.ptr() as *mut f32,
-                width, height, sigma,
+                width,
+                height,
+                sigma,
             );
 
             let gpu_data = download_planar(&ctx, &gpu_dst, width, height);
 
-            let result = compare_buffers(&cpu_data, &gpu_data, &format!("blur_sigma_{}", sigma_name));
+            let result =
+                compare_buffers(&cpu_data, &gpu_data, &format!("blur_sigma_{}", sigma_name));
             result.print();
 
             // Flag problematic cases
             if !result.is_ok(0.05, 0.05) {
-                println!("    ⚠️  SIGNIFICANT DIVERGENCE at {}x{} sigma={}", width, height, sigma_name);
+                println!(
+                    "    ⚠️  SIGNIFICANT DIVERGENCE at {}x{} sigma={}",
+                    width, height, sigma_name
+                );
             }
         }
     }
@@ -304,13 +330,19 @@ fn test_srgb_to_linear_parity() {
         // GPU conversion
         let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
         let mut gpu_linear = Image::<f32, C<3>>::malloc(width as u32, height as u32).unwrap();
-        gpu_src.copy_from_cpu(&rgb, ctx.stream.inner() as _).unwrap();
+        gpu_src
+            .copy_from_cpu(&rgb, ctx.stream.inner() as _)
+            .unwrap();
 
-        ctx.kernel.srgb_to_linear(&ctx.stream, gpu_src.full_view(), gpu_linear.full_view_mut());
+        ctx.kernel
+            .srgb_to_linear(&ctx.stream, gpu_src.full_view(), gpu_linear.full_view_mut());
 
         // Download and deinterleave
         ctx.stream.sync().unwrap();
-        let gpu_interleaved = gpu_linear.full_view().copy_to_cpu(ctx.stream.inner() as _).unwrap();
+        let gpu_interleaved = gpu_linear
+            .full_view()
+            .copy_to_cpu(ctx.stream.inner() as _)
+            .unwrap();
         ctx.stream.sync().unwrap();
 
         // Deinterleave
@@ -376,14 +408,16 @@ fn test_malta_parity() {
         let mut gpu_diff = CuBox::<[f32]>::new_zeroed(size, &ctx.stream).unwrap();
 
         // Clear diff buffer
-        ctx.kernel.clear_buffer(&ctx.stream, gpu_diff.ptr() as *mut f32, size);
+        ctx.kernel
+            .clear_buffer(&ctx.stream, gpu_diff.ptr() as *mut f32, size);
 
         ctx.kernel.malta_diff_map(
             &ctx.stream,
             gpu_uhf1.ptr() as *const f32,
             gpu_uhf2.ptr() as *const f32,
             gpu_diff.ptr() as *mut f32,
-            width, height,
+            width,
+            height,
             (W_UHF_MALTA * HF_ASYMMETRY) as f32,
             (W_UHF_MALTA / HF_ASYMMETRY) as f32,
             NORM1_UHF as f32,
@@ -395,7 +429,10 @@ fn test_malta_parity() {
         result.print();
 
         if !result.is_ok(0.1, 0.1) {
-            println!("    ⚠️  SIGNIFICANT MALTA DIVERGENCE at {}x{}", width, height);
+            println!(
+                "    ⚠️  SIGNIFICANT MALTA DIVERGENCE at {}x{}",
+                width, height
+            );
         }
     }
 }
@@ -426,9 +463,11 @@ fn test_combine_channels_for_masking_parity() {
         );
         let cpu_data = imagef_to_vec(&cpu_mask);
 
-        println!("  CPU mask range: min={:.6}, max={:.6}",
+        println!(
+            "  CPU mask range: min={:.6}, max={:.6}",
             cpu_data.iter().cloned().fold(f32::INFINITY, f32::min),
-            cpu_data.iter().cloned().fold(0.0f32, f32::max));
+            cpu_data.iter().cloned().fold(0.0f32, f32::max)
+        );
 
         // GPU: Upload HF and UHF bands
         let gpu_hf_x = upload_planar(&ctx, &ps.hf[0]);
@@ -450,9 +489,11 @@ fn test_combine_channels_for_masking_parity() {
 
         let gpu_data = download_planar(&ctx, &gpu_mask, width, height);
 
-        println!("  GPU mask range: min={:.6}, max={:.6}",
+        println!(
+            "  GPU mask range: min={:.6}, max={:.6}",
             gpu_data.iter().cloned().fold(f32::INFINITY, f32::min),
-            gpu_data.iter().cloned().fold(0.0f32, f32::max));
+            gpu_data.iter().cloned().fold(0.0f32, f32::max)
+        );
 
         let result = compare_buffers(&cpu_data, &gpu_data, "combine_channels_mask");
         result.print();
@@ -461,9 +502,20 @@ fn test_combine_channels_for_masking_parity() {
             // Print sample values at corners and center for debugging
             let center = width / 2;
             println!("  Sample values:");
-            println!("    [0,0]:     CPU={:.6}, GPU={:.6}", cpu_data[0], gpu_data[0]);
-            println!("    [center]:  CPU={:.6}, GPU={:.6}", cpu_data[center * width + center], gpu_data[center * width + center]);
-            println!("    [end]:     CPU={:.6}, GPU={:.6}", cpu_data[size-1], gpu_data[size-1]);
+            println!(
+                "    [0,0]:     CPU={:.6}, GPU={:.6}",
+                cpu_data[0], gpu_data[0]
+            );
+            println!(
+                "    [center]:  CPU={:.6}, GPU={:.6}",
+                cpu_data[center * width + center],
+                gpu_data[center * width + center]
+            );
+            println!(
+                "    [end]:     CPU={:.6}, GPU={:.6}",
+                cpu_data[size - 1],
+                gpu_data[size - 1]
+            );
         }
     }
 }
@@ -471,8 +523,8 @@ fn test_combine_channels_for_masking_parity() {
 /// Test: Full mask pipeline step by step
 #[test]
 fn test_mask_pipeline_step_by_step() {
+    use butteraugli::consts::{MASK_BIAS, MASK_MUL};
     use butteraugli::mask::{diff_precompute, fuzzy_erosion};
-    use butteraugli::consts::{MASK_MUL, MASK_BIAS};
 
     let ctx = CudaContext::new();
 
@@ -497,26 +549,35 @@ fn test_mask_pipeline_step_by_step() {
     );
     let cpu_mask0_data = imagef_to_vec(&cpu_mask0);
     println!("\n[Step 1] combine_channels_for_masking(img1):");
-    println!("  CPU: min={:.6}, max={:.6}",
+    println!(
+        "  CPU: min={:.6}, max={:.6}",
         cpu_mask0_data.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_mask0_data.iter().cloned().fold(0.0f32, f32::max));
+        cpu_mask0_data.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // ===== Step 2: diff_precompute(mask0) =====
     let mut cpu_diff0 = ImageF::new(width, height);
     diff_precompute(&cpu_mask0, MASK_MUL, MASK_BIAS, &mut cpu_diff0);
     let cpu_diff0_data = imagef_to_vec(&cpu_diff0);
     println!("\n[Step 2] diff_precompute(mask0):");
-    println!("  CPU: min={:.6}, max={:.6}",
+    println!(
+        "  CPU: min={:.6}, max={:.6}",
         cpu_diff0_data.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_diff0_data.iter().cloned().fold(0.0f32, f32::max));
+        cpu_diff0_data.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // ===== Step 3: blur(diff0) =====
     let cpu_blurred0 = gaussian_blur(&cpu_diff0, SIGMA_MASK);
     let cpu_blurred0_data = imagef_to_vec(&cpu_blurred0);
     println!("\n[Step 3] blur(diff0) with sigma={:.1}:", SIGMA_MASK);
-    println!("  CPU: min={:.6}, max={:.6}",
-        cpu_blurred0_data.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_blurred0_data.iter().cloned().fold(0.0f32, f32::max));
+    println!(
+        "  CPU: min={:.6}, max={:.6}",
+        cpu_blurred0_data
+            .iter()
+            .cloned()
+            .fold(f32::INFINITY, f32::min),
+        cpu_blurred0_data.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // GPU blur
     let gpu_diff0 = upload_flat(&ctx, &cpu_diff0_data);
@@ -528,13 +589,20 @@ fn test_mask_pipeline_step_by_step() {
         gpu_diff0.ptr() as *const f32,
         gpu_blurred0.ptr() as *mut f32,
         gpu_temp.ptr() as *mut f32,
-        width, height, SIGMA_MASK,
+        width,
+        height,
+        SIGMA_MASK,
     );
 
     let gpu_blurred0_data = download_planar(&ctx, &gpu_blurred0, width, height);
-    println!("  GPU: min={:.6}, max={:.6}",
-        gpu_blurred0_data.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_blurred0_data.iter().cloned().fold(0.0f32, f32::max));
+    println!(
+        "  GPU: min={:.6}, max={:.6}",
+        gpu_blurred0_data
+            .iter()
+            .cloned()
+            .fold(f32::INFINITY, f32::min),
+        gpu_blurred0_data.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     let blur_result = compare_buffers(&cpu_blurred0_data, &gpu_blurred0_data, "blurred0");
     blur_result.print();
@@ -544,9 +612,14 @@ fn test_mask_pipeline_step_by_step() {
     fuzzy_erosion(&cpu_blurred0, &mut cpu_eroded);
     let cpu_eroded_data = imagef_to_vec(&cpu_eroded);
     println!("\n[Step 4] fuzzy_erosion(blurred0):");
-    println!("  CPU: min={:.6}, max={:.6}",
-        cpu_eroded_data.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_eroded_data.iter().cloned().fold(0.0f32, f32::max));
+    println!(
+        "  CPU: min={:.6}, max={:.6}",
+        cpu_eroded_data
+            .iter()
+            .cloned()
+            .fold(f32::INFINITY, f32::min),
+        cpu_eroded_data.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // GPU fuzzy_erosion
     let mut gpu_eroded = CuBox::<[f32]>::new_zeroed(size, &ctx.stream).unwrap();
@@ -554,13 +627,19 @@ fn test_mask_pipeline_step_by_step() {
         &ctx.stream,
         gpu_blurred0.ptr() as *const f32,
         gpu_eroded.ptr() as *mut f32,
-        width, height,
+        width,
+        height,
     );
 
     let gpu_eroded_data = download_planar(&ctx, &gpu_eroded, width, height);
-    println!("  GPU: min={:.6}, max={:.6}",
-        gpu_eroded_data.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_eroded_data.iter().cloned().fold(0.0f32, f32::max));
+    println!(
+        "  GPU: min={:.6}, max={:.6}",
+        gpu_eroded_data
+            .iter()
+            .cloned()
+            .fold(f32::INFINITY, f32::min),
+        gpu_eroded_data.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     let erosion_result = compare_buffers(&cpu_eroded_data, &gpu_eroded_data, "eroded");
     erosion_result.print();
@@ -571,15 +650,21 @@ fn test_mask_pipeline_step_by_step() {
     println!("\n[Sample at center ({}, {})]:", center, center);
     println!("  mask0:    CPU={:.6}", cpu_mask0_data[center_idx]);
     println!("  diff0:    CPU={:.6}", cpu_diff0_data[center_idx]);
-    println!("  blurred0: CPU={:.6}, GPU={:.6}", cpu_blurred0_data[center_idx], gpu_blurred0_data[center_idx]);
-    println!("  eroded:   CPU={:.6}, GPU={:.6}", cpu_eroded_data[center_idx], gpu_eroded_data[center_idx]);
+    println!(
+        "  blurred0: CPU={:.6}, GPU={:.6}",
+        cpu_blurred0_data[center_idx], gpu_blurred0_data[center_idx]
+    );
+    println!(
+        "  eroded:   CPU={:.6}, GPU={:.6}",
+        cpu_eroded_data[center_idx], gpu_eroded_data[center_idx]
+    );
 }
 
 /// Test: Diff precompute kernel
 #[test]
 fn test_diff_precompute_parity() {
+    use butteraugli::consts::{MASK_BIAS, MASK_MUL};
     use butteraugli::mask::diff_precompute;
-    use butteraugli::consts::{MASK_MUL, MASK_BIAS};
 
     let ctx = CudaContext::new();
 
@@ -607,9 +692,11 @@ fn test_diff_precompute_parity() {
         diff_precompute(&cpu_mask0, MASK_MUL, MASK_BIAS, &mut cpu_diff);
         let cpu_data = imagef_to_vec(&cpu_diff);
 
-        println!("  CPU diff range: min={:.6}, max={:.6}",
+        println!(
+            "  CPU diff range: min={:.6}, max={:.6}",
             cpu_data.iter().cloned().fold(f32::INFINITY, f32::min),
-            cpu_data.iter().cloned().fold(0.0f32, f32::max));
+            cpu_data.iter().cloned().fold(0.0f32, f32::max)
+        );
 
         // GPU diff_precompute
         let mask0_data = imagef_to_vec(&cpu_mask0);
@@ -625,9 +712,11 @@ fn test_diff_precompute_parity() {
 
         let gpu_data = download_planar(&ctx, &gpu_diff, width, height);
 
-        println!("  GPU diff range: min={:.6}, max={:.6}",
+        println!(
+            "  GPU diff range: min={:.6}, max={:.6}",
             gpu_data.iter().cloned().fold(f32::INFINITY, f32::min),
-            gpu_data.iter().cloned().fold(0.0f32, f32::max));
+            gpu_data.iter().cloned().fold(0.0f32, f32::max)
+        );
 
         let result = compare_buffers(&cpu_data, &gpu_data, "diff_precompute");
         result.print();
@@ -665,7 +754,9 @@ fn test_frequency_separation_parity() {
             gpu_xyb_y.ptr() as *const f32,
             gpu_lf.ptr() as *mut f32,
             gpu_temp.ptr() as *mut f32,
-            width, height, SIGMA_LF,
+            width,
+            height,
+            SIGMA_LF,
         );
 
         let gpu_lf_data = download_planar(&ctx, &gpu_lf, width, height);
@@ -729,7 +820,9 @@ fn test_boundary_behavior() {
             gpu_src.ptr() as *const f32,
             gpu_dst.ptr() as *mut f32,
             gpu_temp.ptr() as *mut f32,
-            width, height, SIGMA_MF,
+            width,
+            height,
+            SIGMA_MF,
         );
 
         let gpu_data = download_planar(&ctx, &gpu_dst, width, height);
@@ -748,11 +841,20 @@ fn test_boundary_behavior() {
             let cpu_val = cpu_data[idx];
             let gpu_val = gpu_data[idx];
             let diff = (cpu_val - gpu_val).abs();
-            let rel = if cpu_val.abs() > 1e-6 { diff / cpu_val.abs() } else { diff };
+            let rel = if cpu_val.abs() > 1e-6 {
+                diff / cpu_val.abs()
+            } else {
+                diff
+            };
 
             if rel > 0.1 {
-                println!("  {} corner: CPU={:.6}, GPU={:.6}, diff={:.2}%",
-                    name, cpu_val, gpu_val, rel * 100.0);
+                println!(
+                    "  {} corner: CPU={:.6}, GPU={:.6}, diff={:.2}%",
+                    name,
+                    cpu_val,
+                    gpu_val,
+                    rel * 100.0
+                );
                 corner_divergence = true;
             }
         }
@@ -765,8 +867,11 @@ fn test_boundary_behavior() {
 
         // Overall comparison
         let result = compare_buffers(&cpu_data, &gpu_data, "corners_blur");
-        println!("  Overall: max_abs={:.6}, max_rel={:.2}%",
-            result.max_abs_err, result.max_rel_err * 100.0);
+        println!(
+            "  Overall: max_abs={:.6}, max_rel={:.2}%",
+            result.max_abs_err,
+            result.max_rel_err * 100.0
+        );
     }
 }
 
@@ -785,47 +890,89 @@ fn test_full_pipeline_by_size() {
         let distorted: Vec<u8> = source.iter().map(|&v| v.saturating_add(10)).collect();
 
         // CPU score
-        let cpu_result = compute_butteraugli(&source, &distorted, width, height, &ButteraugliParams::default())
-            .expect("CPU butteraugli failed");
+        let cpu_result = compute_butteraugli(
+            &source,
+            &distorted,
+            width,
+            height,
+            &ButteraugliParams::default(),
+        )
+        .expect("CPU butteraugli failed");
         let cpu_score = cpu_result.score;
 
         // GPU score
         let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
         let mut gpu_dst = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
-        gpu_src.copy_from_cpu(&source, ctx.stream.inner() as _).unwrap();
-        gpu_dst.copy_from_cpu(&distorted, ctx.stream.inner() as _).unwrap();
+        gpu_src
+            .copy_from_cpu(&source, ctx.stream.inner() as _)
+            .unwrap();
+        gpu_dst
+            .copy_from_cpu(&distorted, ctx.stream.inner() as _)
+            .unwrap();
         ctx.stream.sync().unwrap();
 
         let mut butteraugli = Butteraugli::new(width as u32, height as u32).unwrap();
-        let gpu_score = butteraugli.compute(gpu_src.full_view(), gpu_dst.full_view()).unwrap();
+        let gpu_score = butteraugli
+            .compute(gpu_src.full_view(), gpu_dst.full_view())
+            .unwrap();
 
         let abs_err = (cpu_score - gpu_score as f64).abs();
-        let rel_err = if cpu_score.abs() > 1e-6 { abs_err / cpu_score.abs() } else { abs_err };
+        let rel_err = if cpu_score.abs() > 1e-6 {
+            abs_err / cpu_score.abs()
+        } else {
+            abs_err
+        };
 
         let status = if rel_err < 0.15 { "✓" } else { "✗" };
-        println!("  {} edge_v: CPU={:.4}, GPU={:.4}, err={:.2}%",
-            status, cpu_score, gpu_score, rel_err * 100.0);
+        println!(
+            "  {} edge_v: CPU={:.4}, GPU={:.4}, err={:.2}%",
+            status,
+            cpu_score,
+            gpu_score,
+            rel_err * 100.0
+        );
 
         // Test with gradient
         let source = gen_gradient_h(width, height);
         let distorted: Vec<u8> = source.iter().map(|&v| v.saturating_add(10)).collect();
 
-        let cpu_result = compute_butteraugli(&source, &distorted, width, height, &ButteraugliParams::default())
-            .expect("CPU butteraugli failed");
+        let cpu_result = compute_butteraugli(
+            &source,
+            &distorted,
+            width,
+            height,
+            &ButteraugliParams::default(),
+        )
+        .expect("CPU butteraugli failed");
         let cpu_score = cpu_result.score;
 
-        gpu_src.copy_from_cpu(&source, ctx.stream.inner() as _).unwrap();
-        gpu_dst.copy_from_cpu(&distorted, ctx.stream.inner() as _).unwrap();
+        gpu_src
+            .copy_from_cpu(&source, ctx.stream.inner() as _)
+            .unwrap();
+        gpu_dst
+            .copy_from_cpu(&distorted, ctx.stream.inner() as _)
+            .unwrap();
         ctx.stream.sync().unwrap();
 
-        let gpu_score = butteraugli.compute(gpu_src.full_view(), gpu_dst.full_view()).unwrap();
+        let gpu_score = butteraugli
+            .compute(gpu_src.full_view(), gpu_dst.full_view())
+            .unwrap();
 
         let abs_err = (cpu_score - gpu_score as f64).abs();
-        let rel_err = if cpu_score.abs() > 1e-6 { abs_err / cpu_score.abs() } else { abs_err };
+        let rel_err = if cpu_score.abs() > 1e-6 {
+            abs_err / cpu_score.abs()
+        } else {
+            abs_err
+        };
 
         let status = if rel_err < 0.30 { "✓" } else { "✗" };
-        println!("  {} gradient: CPU={:.4}, GPU={:.4}, err={:.2}%",
-            status, cpu_score, gpu_score, rel_err * 100.0);
+        println!(
+            "  {} gradient: CPU={:.4}, GPU={:.4}, err={:.2}%",
+            status,
+            cpu_score,
+            gpu_score,
+            rel_err * 100.0
+        );
     }
 }
 
@@ -842,11 +989,18 @@ fn test_kernel_size_interaction() {
         let kernel_size = kernel.len();
         let half_kernel = kernel_size / 2;
 
-        println!("Sigma {:.3}: kernel_size={}, half={}", sigma, kernel_size, half_kernel);
+        println!(
+            "Sigma {:.3}: kernel_size={}, half={}",
+            sigma, kernel_size, half_kernel
+        );
 
         for size in [8, 16, 32, 64, 128] {
             let ratio = size as f32 / kernel_size as f32;
-            let warning = if ratio < 2.0 { " ⚠️ kernel > half image!" } else { "" };
+            let warning = if ratio < 2.0 {
+                " ⚠️ kernel > half image!"
+            } else {
+                ""
+            };
             println!("  {}x{}: ratio={:.1}{}", size, size, ratio, warning);
         }
     }
@@ -877,24 +1031,39 @@ fn test_pipeline_trace() {
     let ps2 = separate_frequencies(&xyb2);
 
     // === CPU Reference ===
-    let cpu_result = compute_butteraugli(&source, &distorted, width, height, &ButteraugliParams::default())
-        .expect("CPU butteraugli failed");
+    let cpu_result = compute_butteraugli(
+        &source,
+        &distorted,
+        width,
+        height,
+        &ButteraugliParams::default(),
+    )
+    .expect("CPU butteraugli failed");
     println!("CPU final score: {:.4}", cpu_result.score);
     let cpu_diffmap = cpu_result.diffmap.as_ref().expect("diffmap not returned");
     let cpu_diffmap_vec = imagef_to_vec(cpu_diffmap);
-    println!("CPU diffmap max: {:.4}", cpu_diffmap_vec.iter().cloned().fold(0.0f32, f32::max));
+    println!(
+        "CPU diffmap max: {:.4}",
+        cpu_diffmap_vec.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // === GPU Pipeline ===
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
     let mut gpu_dst = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
-    gpu_src.copy_from_cpu(&source, ctx.stream.inner() as _).unwrap();
-    gpu_dst.copy_from_cpu(&distorted, ctx.stream.inner() as _).unwrap();
+    gpu_src
+        .copy_from_cpu(&source, ctx.stream.inner() as _)
+        .unwrap();
+    gpu_dst
+        .copy_from_cpu(&distorted, ctx.stream.inner() as _)
+        .unwrap();
     ctx.stream.sync().unwrap();
 
     let mut butteraugli = Butteraugli::new(width as u32, height as u32).unwrap();
 
     // Run without multi-scale to isolate base pipeline
-    let gpu_score = butteraugli.compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false).unwrap();
+    let gpu_score = butteraugli
+        .compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false)
+        .unwrap();
     println!("\nGPU final score (no MS): {:.4}", gpu_score);
 
     // Get GPU diffmap
@@ -909,16 +1078,33 @@ fn test_pipeline_trace() {
 
     let cpu_center = cpu_diffmap_vec[center * width + center];
     let gpu_center = gpu_diffmap[center * width + center];
-    println!("  center ({},{}): CPU={:.6}, GPU={:.6}, ratio={:.2}",
-        center, center, cpu_center, gpu_center, gpu_center / cpu_center.max(1e-6));
+    println!(
+        "  center ({},{}): CPU={:.6}, GPU={:.6}, ratio={:.2}",
+        center,
+        center,
+        cpu_center,
+        gpu_center,
+        gpu_center / cpu_center.max(1e-6)
+    );
 
     let cpu_edge = cpu_diffmap_vec[center * width + edge_x];
     let gpu_edge = gpu_diffmap[center * width + edge_x];
-    println!("  edge ({},{}): CPU={:.6}, GPU={:.6}, ratio={:.2}",
-        edge_x, center, cpu_edge, gpu_edge, gpu_edge / cpu_edge.max(1e-6));
+    println!(
+        "  edge ({},{}): CPU={:.6}, GPU={:.6}, ratio={:.2}",
+        edge_x,
+        center,
+        cpu_edge,
+        gpu_edge,
+        gpu_edge / cpu_edge.max(1e-6)
+    );
 
     // Find the pixel with maximum GPU value
-    let max_idx = gpu_diffmap.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
+    let max_idx = gpu_diffmap
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .unwrap()
+        .0;
     let max_x = max_idx % width;
     let max_y = max_idx / width;
     println!("\nMax GPU value at ({}, {}):", max_x, max_y);
@@ -929,24 +1115,39 @@ fn test_pipeline_trace() {
     let gpu_ac_x = butteraugli.get_block_diff_ac(0);
     let gpu_ac_y = butteraugli.get_block_diff_ac(1);
     let gpu_ac_b = butteraugli.get_block_diff_ac(2);
-    println!("\nGPU block_diff_ac at max position ({}, {}):", max_x, max_y);
-    println!("  X={:.6}, Y={:.6}, B={:.6}",
-        gpu_ac_x[max_idx], gpu_ac_y[max_idx], gpu_ac_b[max_idx]);
-    println!("  sum={:.6}", gpu_ac_x[max_idx] + gpu_ac_y[max_idx] + gpu_ac_b[max_idx]);
+    println!(
+        "\nGPU block_diff_ac at max position ({}, {}):",
+        max_x, max_y
+    );
+    println!(
+        "  X={:.6}, Y={:.6}, B={:.6}",
+        gpu_ac_x[max_idx], gpu_ac_y[max_idx], gpu_ac_b[max_idx]
+    );
+    println!(
+        "  sum={:.6}",
+        gpu_ac_x[max_idx] + gpu_ac_y[max_idx] + gpu_ac_b[max_idx]
+    );
 
     println!("\nGPU block_diff_ac max values:");
-    println!("  X_max={:.6}, Y_max={:.6}, B_max={:.6}",
+    println!(
+        "  X_max={:.6}, Y_max={:.6}, B_max={:.6}",
         gpu_ac_x.iter().cloned().fold(0.0f32, f32::max),
         gpu_ac_y.iter().cloned().fold(0.0f32, f32::max),
-        gpu_ac_b.iter().cloned().fold(0.0f32, f32::max));
+        gpu_ac_b.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // Look at block_diff_dc values
     let gpu_dc_x = butteraugli.get_block_diff_dc(0);
     let gpu_dc_y = butteraugli.get_block_diff_dc(1);
     let gpu_dc_b = butteraugli.get_block_diff_dc(2);
-    println!("\nGPU block_diff_dc at max position ({}, {}):", max_x, max_y);
-    println!("  X={:.6}, Y={:.6}, B={:.6}",
-        gpu_dc_x[max_idx], gpu_dc_y[max_idx], gpu_dc_b[max_idx]);
+    println!(
+        "\nGPU block_diff_dc at max position ({}, {}):",
+        max_x, max_y
+    );
+    println!(
+        "  X={:.6}, Y={:.6}, B={:.6}",
+        gpu_dc_x[max_idx], gpu_dc_y[max_idx], gpu_dc_b[max_idx]
+    );
 
     // Look at mask values
     let gpu_mask = butteraugli.get_mask();
@@ -954,7 +1155,10 @@ fn test_pipeline_trace() {
     let gpu_mask_max = gpu_mask.iter().cloned().fold(0.0f32, f32::max);
     let gpu_mask_min = gpu_mask.iter().cloned().fold(f32::INFINITY, f32::min);
     println!("\nGPU mask:");
-    println!("  at_max_pos={:.6}, min={:.6}, max={:.6}", gpu_mask_at_max, gpu_mask_min, gpu_mask_max);
+    println!(
+        "  at_max_pos={:.6}, min={:.6}, max={:.6}",
+        gpu_mask_at_max, gpu_mask_min, gpu_mask_max
+    );
 
     // Manually compute what diffmap SHOULD be at max position
     let ac_sum = gpu_ac_x[max_idx] + gpu_ac_y[max_idx] + gpu_ac_b[max_idx];
@@ -981,7 +1185,10 @@ fn test_pipeline_trace() {
 
     let computed_diffmap = (maskval_ac * ac_sum + maskval_dc * dc_sum).sqrt();
     println!("\nManual diffmap computation at ({}, {}):", max_x, max_y);
-    println!("  maskval_ac={:.6}, maskval_dc={:.6}", maskval_ac, maskval_dc);
+    println!(
+        "  maskval_ac={:.6}, maskval_dc={:.6}",
+        maskval_ac, maskval_dc
+    );
     println!("  ac_sum={:.6}, dc_sum={:.6}", ac_sum, dc_sum);
     println!("  computed_diffmap={:.6}", computed_diffmap);
     println!("  actual_gpu_diffmap={:.6}", gpu_diffmap[max_idx]);
@@ -994,12 +1201,21 @@ fn test_pipeline_trace() {
     let cpu_lf2_x = ps2.lf.plane(0).get(max_x, max_y);
     let cpu_lf2_y = ps2.lf.plane(1).get(max_x, max_y);
     let cpu_lf2_b = ps2.lf.plane(2).get(max_x, max_y);
-    println!("  LF1: X={:.6}, Y={:.6}, B={:.6}", cpu_lf1_x, cpu_lf1_y, cpu_lf1_b);
-    println!("  LF2: X={:.6}, Y={:.6}, B={:.6}", cpu_lf2_x, cpu_lf2_y, cpu_lf2_b);
+    println!(
+        "  LF1: X={:.6}, Y={:.6}, B={:.6}",
+        cpu_lf1_x, cpu_lf1_y, cpu_lf1_b
+    );
+    println!(
+        "  LF2: X={:.6}, Y={:.6}, B={:.6}",
+        cpu_lf2_x, cpu_lf2_y, cpu_lf2_b
+    );
     let cpu_lf_diff_x = cpu_lf1_x - cpu_lf2_x;
     let cpu_lf_diff_y = cpu_lf1_y - cpu_lf2_y;
     let cpu_lf_diff_b = cpu_lf1_b - cpu_lf2_b;
-    println!("  Diff: X={:.6}, Y={:.6}, B={:.6}", cpu_lf_diff_x, cpu_lf_diff_y, cpu_lf_diff_b);
+    println!(
+        "  Diff: X={:.6}, Y={:.6}, B={:.6}",
+        cpu_lf_diff_x, cpu_lf_diff_y, cpu_lf_diff_b
+    );
 
     // CPU expected block_diff_dc
     const WMUL_LF_X: f32 = 29.2353797994;
@@ -1014,9 +1230,14 @@ fn test_pipeline_trace() {
 
     // Compare with GPU
     println!("\nGPU block_diff_dc at ({}, {}):", max_x, max_y);
-    println!("  X={:.6}, Y={:.6}, B={:.6}",
-        gpu_dc_x[max_idx], gpu_dc_y[max_idx], gpu_dc_b[max_idx]);
-    println!("  sum={:.6}", gpu_dc_x[max_idx] + gpu_dc_y[max_idx] + gpu_dc_b[max_idx]);
+    println!(
+        "  X={:.6}, Y={:.6}, B={:.6}",
+        gpu_dc_x[max_idx], gpu_dc_y[max_idx], gpu_dc_b[max_idx]
+    );
+    println!(
+        "  sum={:.6}",
+        gpu_dc_x[max_idx] + gpu_dc_y[max_idx] + gpu_dc_b[max_idx]
+    );
 
     // Compute ratio
     println!("\nGPU/CPU DC ratio:");
@@ -1033,20 +1254,34 @@ fn test_pipeline_trace() {
     // Compute CPU mask at max position
     let mut cpu_mask0 = ImageF::new(width, height);
     let mut cpu_mask1 = ImageF::new(width, height);
-    combine_channels_for_masking(&[ps1.hf[0].clone(), ps1.hf[1].clone()],
-                                  &[ps1.uhf[0].clone(), ps1.uhf[1].clone()],
-                                  &mut cpu_mask0);
-    combine_channels_for_masking(&[ps2.hf[0].clone(), ps2.hf[1].clone()],
-                                  &[ps2.uhf[0].clone(), ps2.uhf[1].clone()],
-                                  &mut cpu_mask1);
+    combine_channels_for_masking(
+        &[ps1.hf[0].clone(), ps1.hf[1].clone()],
+        &[ps1.uhf[0].clone(), ps1.uhf[1].clone()],
+        &mut cpu_mask0,
+    );
+    combine_channels_for_masking(
+        &[ps2.hf[0].clone(), ps2.hf[1].clone()],
+        &[ps2.uhf[0].clone(), ps2.uhf[1].clone()],
+        &mut cpu_mask1,
+    );
     let cpu_mask_final = compute_mask(&cpu_mask0, &cpu_mask1, None);
     let cpu_mask_at_max = cpu_mask_final.get(max_x, max_y);
-    let cpu_mask_max = (0..width*height).map(|i| cpu_mask_final.get(i % width, i / width)).fold(0.0f32, f32::max);
-    let cpu_mask_min = (0..width*height).map(|i| cpu_mask_final.get(i % width, i / width)).fold(f32::INFINITY, f32::min);
+    let cpu_mask_max = (0..width * height)
+        .map(|i| cpu_mask_final.get(i % width, i / width))
+        .fold(0.0f32, f32::max);
+    let cpu_mask_min = (0..width * height)
+        .map(|i| cpu_mask_final.get(i % width, i / width))
+        .fold(f32::INFINITY, f32::min);
     println!("\nCPU mask:");
-    println!("  at_max_pos={:.6}, min={:.6}, max={:.6}", cpu_mask_at_max, cpu_mask_min, cpu_mask_max);
+    println!(
+        "  at_max_pos={:.6}, min={:.6}, max={:.6}",
+        cpu_mask_at_max, cpu_mask_min, cpu_mask_max
+    );
     println!("  GPU mask at same pos: {:.6}", gpu_mask[max_idx]);
-    println!("  GPU/CPU mask ratio: {:.2}", gpu_mask[max_idx] / cpu_mask_at_max);
+    println!(
+        "  GPU/CPU mask ratio: {:.2}",
+        gpu_mask[max_idx] / cpu_mask_at_max
+    );
 }
 
 /// Test: Multi-scale vs single-scale to isolate the 2x error
@@ -1065,31 +1300,48 @@ fn test_multiscale_isolation() {
         let distorted: Vec<u8> = source.iter().map(|&v| v.saturating_add(10)).collect();
 
         // CPU score (always with multi-scale)
-        let cpu_result = compute_butteraugli(&source, &distorted, width, height, &ButteraugliParams::default())
-            .expect("CPU butteraugli failed");
+        let cpu_result = compute_butteraugli(
+            &source,
+            &distorted,
+            width,
+            height,
+            &ButteraugliParams::default(),
+        )
+        .expect("CPU butteraugli failed");
         let cpu_score = cpu_result.score;
 
         // GPU setup
         let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
         let mut gpu_dst = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
-        gpu_src.copy_from_cpu(&source, ctx.stream.inner() as _).unwrap();
-        gpu_dst.copy_from_cpu(&distorted, ctx.stream.inner() as _).unwrap();
+        gpu_src
+            .copy_from_cpu(&source, ctx.stream.inner() as _)
+            .unwrap();
+        gpu_dst
+            .copy_from_cpu(&distorted, ctx.stream.inner() as _)
+            .unwrap();
         ctx.stream.sync().unwrap();
 
         let mut butteraugli = Butteraugli::new(width as u32, height as u32).unwrap();
 
         // GPU WITHOUT multi-scale
-        let gpu_no_ms = butteraugli.compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false).unwrap();
+        let gpu_no_ms = butteraugli
+            .compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false)
+            .unwrap();
 
         // GPU WITH multi-scale
-        let gpu_with_ms = butteraugli.compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), true).unwrap();
+        let gpu_with_ms = butteraugli
+            .compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), true)
+            .unwrap();
 
         let err_no_ms = (cpu_score - gpu_no_ms as f64).abs() / cpu_score.max(0.001) * 100.0;
         let err_with_ms = (cpu_score - gpu_with_ms as f64).abs() / cpu_score.max(0.001) * 100.0;
 
         println!("  CPU:         {:.4}", cpu_score);
         println!("  GPU no MS:   {:.4} (err: {:.1}%)", gpu_no_ms, err_no_ms);
-        println!("  GPU with MS: {:.4} (err: {:.1}%)", gpu_with_ms, err_with_ms);
+        println!(
+            "  GPU with MS: {:.4} (err: {:.1}%)",
+            gpu_with_ms, err_with_ms
+        );
 
         // Analysis
         if err_no_ms < 15.0 && err_with_ms > 50.0 {
@@ -1132,20 +1384,26 @@ fn test_frequency_band_comparison() {
     // GPU pipeline
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
     let mut gpu_dst = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
-    gpu_src.copy_from_cpu(&source, ctx.stream.inner() as _).unwrap();
-    gpu_dst.copy_from_cpu(&distorted, ctx.stream.inner() as _).unwrap();
+    gpu_src
+        .copy_from_cpu(&source, ctx.stream.inner() as _)
+        .unwrap();
+    gpu_dst
+        .copy_from_cpu(&distorted, ctx.stream.inner() as _)
+        .unwrap();
     ctx.stream.sync().unwrap();
 
     let mut butteraugli = Butteraugli::new(width as u32, height as u32).unwrap();
 
     // Run pipeline without multiscale to get frequency bands
-    let _gpu_score = butteraugli.compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false).unwrap();
+    let _gpu_score = butteraugli
+        .compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false)
+        .unwrap();
 
     // Get GPU frequency bands
     let gpu_uhf1_x = butteraugli.get_freq1(0, 0); // UHF X
     let gpu_uhf1_y = butteraugli.get_freq1(0, 1); // UHF Y
-    let gpu_hf1_x = butteraugli.get_freq1(1, 0);  // HF X
-    let gpu_hf1_y = butteraugli.get_freq1(1, 1);  // HF Y
+    let gpu_hf1_x = butteraugli.get_freq1(1, 0); // HF X
+    let gpu_hf1_y = butteraugli.get_freq1(1, 1); // HF Y
 
     // Get CPU frequency bands
     let cpu_uhf1_x = imagef_to_vec(&ps1.uhf[0]);
@@ -1155,7 +1413,12 @@ fn test_frequency_band_comparison() {
 
     // Find position with max GPU diffmap
     let gpu_diffmap = butteraugli.get_diffmap();
-    let max_idx = gpu_diffmap.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
+    let max_idx = gpu_diffmap
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .unwrap()
+        .0;
     let max_x = max_idx % width;
     let max_y = max_idx / width;
 
@@ -1164,49 +1427,77 @@ fn test_frequency_band_comparison() {
 
     // Compare UHF X
     println!("=== UHF X ===");
-    println!("CPU range: min={:.6}, max={:.6}",
+    println!(
+        "CPU range: min={:.6}, max={:.6}",
         cpu_uhf1_x.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_uhf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("GPU range: min={:.6}, max={:.6}",
+        cpu_uhf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "GPU range: min={:.6}, max={:.6}",
         gpu_uhf1_x.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_uhf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("At max_pos: CPU={:.6}, GPU={:.6}", cpu_uhf1_x[max_idx], gpu_uhf1_x[max_idx]);
+        gpu_uhf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "At max_pos: CPU={:.6}, GPU={:.6}",
+        cpu_uhf1_x[max_idx], gpu_uhf1_x[max_idx]
+    );
     let uhf_x_result = compare_buffers(&cpu_uhf1_x, &gpu_uhf1_x, "UHF_X");
     uhf_x_result.print();
 
     // Compare UHF Y
     println!("\n=== UHF Y ===");
-    println!("CPU range: min={:.6}, max={:.6}",
+    println!(
+        "CPU range: min={:.6}, max={:.6}",
         cpu_uhf1_y.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_uhf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("GPU range: min={:.6}, max={:.6}",
+        cpu_uhf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "GPU range: min={:.6}, max={:.6}",
         gpu_uhf1_y.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_uhf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("At max_pos: CPU={:.6}, GPU={:.6}", cpu_uhf1_y[max_idx], gpu_uhf1_y[max_idx]);
+        gpu_uhf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "At max_pos: CPU={:.6}, GPU={:.6}",
+        cpu_uhf1_y[max_idx], gpu_uhf1_y[max_idx]
+    );
     let uhf_y_result = compare_buffers(&cpu_uhf1_y, &gpu_uhf1_y, "UHF_Y");
     uhf_y_result.print();
 
     // Compare HF X
     println!("\n=== HF X ===");
-    println!("CPU range: min={:.6}, max={:.6}",
+    println!(
+        "CPU range: min={:.6}, max={:.6}",
         cpu_hf1_x.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_hf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("GPU range: min={:.6}, max={:.6}",
+        cpu_hf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "GPU range: min={:.6}, max={:.6}",
         gpu_hf1_x.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_hf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("At max_pos: CPU={:.6}, GPU={:.6}", cpu_hf1_x[max_idx], gpu_hf1_x[max_idx]);
+        gpu_hf1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "At max_pos: CPU={:.6}, GPU={:.6}",
+        cpu_hf1_x[max_idx], gpu_hf1_x[max_idx]
+    );
     let hf_x_result = compare_buffers(&cpu_hf1_x, &gpu_hf1_x, "HF_X");
     hf_x_result.print();
 
     // Compare HF Y
     println!("\n=== HF Y ===");
-    println!("CPU range: min={:.6}, max={:.6}",
+    println!(
+        "CPU range: min={:.6}, max={:.6}",
         cpu_hf1_y.iter().cloned().fold(f32::INFINITY, f32::min),
-        cpu_hf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("GPU range: min={:.6}, max={:.6}",
+        cpu_hf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "GPU range: min={:.6}, max={:.6}",
         gpu_hf1_y.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_hf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-    println!("At max_pos: CPU={:.6}, GPU={:.6}", cpu_hf1_y[max_idx], gpu_hf1_y[max_idx]);
+        gpu_hf1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
+    println!(
+        "At max_pos: CPU={:.6}, GPU={:.6}",
+        cpu_hf1_y[max_idx], gpu_hf1_y[max_idx]
+    );
     let hf_y_result = compare_buffers(&cpu_hf1_y, &gpu_hf1_y, "HF_Y");
     hf_y_result.print();
 
@@ -1221,8 +1512,14 @@ fn test_frequency_band_comparison() {
     let cpu_mask_raw = (cpu_xdiff * cpu_xdiff + cpu_ydiff * cpu_ydiff).sqrt();
 
     println!("\n=== Mask Computation at ({}, {}) ===", max_x, max_y);
-    println!("GPU: xdiff={:.6}, ydiff={:.6}, mask_raw={:.6}", gpu_xdiff, gpu_ydiff, gpu_mask_raw);
-    println!("CPU: xdiff={:.6}, ydiff={:.6}, mask_raw={:.6}", cpu_xdiff, cpu_ydiff, cpu_mask_raw);
+    println!(
+        "GPU: xdiff={:.6}, ydiff={:.6}, mask_raw={:.6}",
+        gpu_xdiff, gpu_ydiff, gpu_mask_raw
+    );
+    println!(
+        "CPU: xdiff={:.6}, ydiff={:.6}, mask_raw={:.6}",
+        cpu_xdiff, cpu_ydiff, cpu_mask_raw
+    );
 
     // Get actual GPU mask value
     let gpu_mask = butteraugli.get_mask();
@@ -1235,20 +1532,24 @@ fn test_frequency_band_comparison() {
     let cpu_xyb1_x = imagef_to_vec(xyb1_cpu.plane(0));
     let cpu_xyb1_y = imagef_to_vec(xyb1_cpu.plane(1));
 
-    println!("XYB1 X range: CPU=[{:.6}, {:.6}], GPU=[{:.6}, {:.6}]",
+    println!(
+        "XYB1 X range: CPU=[{:.6}, {:.6}], GPU=[{:.6}, {:.6}]",
         cpu_xyb1_x.iter().cloned().fold(f32::INFINITY, f32::min),
         cpu_xyb1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
         gpu_xyb1_x.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_xyb1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+        gpu_xyb1_x.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
 
     let xyb_x_result = compare_buffers(&cpu_xyb1_x, &gpu_xyb1_x, "XYB1_X");
     xyb_x_result.print();
 
-    println!("XYB1 Y range: CPU=[{:.6}, {:.6}], GPU=[{:.6}, {:.6}]",
+    println!(
+        "XYB1 Y range: CPU=[{:.6}, {:.6}], GPU=[{:.6}, {:.6}]",
         cpu_xyb1_y.iter().cloned().fold(f32::INFINITY, f32::min),
         cpu_xyb1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
         gpu_xyb1_y.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_xyb1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+        gpu_xyb1_y.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
 
     let xyb_y_result = compare_buffers(&cpu_xyb1_y, &gpu_xyb1_y, "XYB1_Y");
     xyb_y_result.print();
@@ -1270,26 +1571,50 @@ fn test_parity_summary() {
         let source = gen_edge_v(width, height);
         let distorted: Vec<u8> = source.iter().map(|&v| v.saturating_add(10)).collect();
 
-        let cpu_result = compute_butteraugli(&source, &distorted, width, height, &ButteraugliParams::default())
-            .expect("CPU failed");
+        let cpu_result = compute_butteraugli(
+            &source,
+            &distorted,
+            width,
+            height,
+            &ButteraugliParams::default(),
+        )
+        .expect("CPU failed");
 
         let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
         let mut gpu_dst = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
-        gpu_src.copy_from_cpu(&source, ctx.stream.inner() as _).unwrap();
-        gpu_dst.copy_from_cpu(&distorted, ctx.stream.inner() as _).unwrap();
+        gpu_src
+            .copy_from_cpu(&source, ctx.stream.inner() as _)
+            .unwrap();
+        gpu_dst
+            .copy_from_cpu(&distorted, ctx.stream.inner() as _)
+            .unwrap();
         ctx.stream.sync().unwrap();
 
         let mut butteraugli = Butteraugli::new(width as u32, height as u32).unwrap();
-        let gpu_score = butteraugli.compute(gpu_src.full_view(), gpu_dst.full_view()).unwrap();
+        let gpu_score = butteraugli
+            .compute(gpu_src.full_view(), gpu_dst.full_view())
+            .unwrap();
 
         let rel_err = (cpu_result.score - gpu_score as f64).abs() / cpu_result.score.max(0.001);
         let status = if rel_err < 0.15 { "✓" } else { "✗" };
 
-        println!("║ {} {:3}x{:3} edge:     CPU={:7.4} GPU={:7.4} err={:6.2}%        ║",
-            status, width, height, cpu_result.score, gpu_score, rel_err * 100.0);
+        println!(
+            "║ {} {:3}x{:3} edge:     CPU={:7.4} GPU={:7.4} err={:6.2}%        ║",
+            status,
+            width,
+            height,
+            cpu_result.score,
+            gpu_score,
+            rel_err * 100.0
+        );
 
         if rel_err >= 0.15 {
-            failures.push(format!("{}x{} edge: {:.1}% error", width, height, rel_err * 100.0));
+            failures.push(format!(
+                "{}x{} edge: {:.1}% error",
+                width,
+                height,
+                rel_err * 100.0
+            ));
         }
     }
 

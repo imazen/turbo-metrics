@@ -47,7 +47,11 @@ pub unsafe extern "ptx-kernel" fn horizontal_blur_kernel(
 
     // Compute bounds (clamp to row)
     let begin = if x >= radius { x - radius } else { 0 };
-    let end = if x + radius < width { x + radius } else { width - 1 };
+    let end = if x + radius < width {
+        x + radius
+    } else {
+        width - 1
+    };
 
     // Accumulate weighted sum
     let mut sum = 0.0f32;
@@ -90,7 +94,11 @@ pub unsafe extern "ptx-kernel" fn vertical_blur_kernel(
 
     // Compute bounds (clamp to column)
     let begin = if y >= radius { y - radius } else { 0 };
-    let end = if y + radius < height { y + radius } else { height - 1 };
+    let end = if y + radius < height {
+        y + radius
+    } else {
+        height - 1
+    };
 
     // Accumulate weighted sum
     let mut sum = 0.0f32;
@@ -149,12 +157,12 @@ fn mirror(mut x: i32, size: i32) -> usize {
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_horizontal_kernel(
     src: *const f32,
-    dst: *mut f32,  // Output is transposed: dst[x][y] = result
+    dst: *mut f32, // Output is transposed: dst[x][y] = result
     width: usize,
     height: usize,
-    w0: f32,  // Center weight
-    w1: f32,  // 1-pixel offset weight
-    w2: f32,  // 2-pixel offset weight
+    w0: f32, // Center weight
+    w1: f32, // 1-pixel offset weight
+    w2: f32, // 2-pixel offset weight
 ) {
     let idx = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
@@ -187,10 +195,10 @@ pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_horizontal_kernel(
 /// Input is transposed (from horizontal pass), output is in original orientation.
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_vertical_kernel(
-    src: *const f32,  // Transposed input: src[x][y]
-    dst: *mut f32,    // Output in original orientation: dst[y][x]
-    width: usize,     // Original width
-    height: usize,    // Original height
+    src: *const f32, // Transposed input: src[x][y]
+    dst: *mut f32,   // Output in original orientation: dst[y][x]
+    width: usize,    // Original width
+    height: usize,   // Original height
     w0: f32,
     w1: f32,
     w2: f32,
@@ -204,8 +212,8 @@ pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_vertical_kernel(
     }
 
     // In transposed input, iterate as if original y is column index
-    let x = idx / height;  // Original x coordinate
-    let y = idx % height;  // Original y coordinate
+    let x = idx / height; // Original x coordinate
+    let y = idx % height; // Original y coordinate
     let iheight = height as i32;
 
     // In transposed buffer, column x (original) is at src[x * height + ...]

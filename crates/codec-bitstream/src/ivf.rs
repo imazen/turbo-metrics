@@ -1,7 +1,6 @@
 use crate::Codec;
 use bitstream_io::{ByteRead, ByteReader, LittleEndian};
 use std::io;
-use std::iter::repeat;
 
 #[derive(Debug, Clone)]
 pub struct Header {
@@ -65,7 +64,7 @@ pub fn read_packet(r: impl io::Read, buf: &mut Vec<u8>) -> io::Result<u64> {
     // buf.clear();
     buf.reserve(len as usize);
     if buf.len() < len as usize {
-        buf.extend(repeat(0).take(len as usize - buf.len()));
+        buf.extend(std::iter::repeat_n(0, len as usize - buf.len()));
     } else if buf.len() > len as usize {
         buf.truncate(len as usize);
     }

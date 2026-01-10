@@ -42,11 +42,16 @@ fn load_image(path: &Path) -> (usize, usize, Vec<u8>) {
         let (w, h) = decoder.dimensions().unwrap();
         let raw = match result {
             zune_core::result::DecodingResult::U8(v) => v,
-            zune_core::result::DecodingResult::U16(v) => v.iter().map(|&x| (x >> 8) as u8).collect(),
+            zune_core::result::DecodingResult::U16(v) => {
+                v.iter().map(|&x| (x >> 8) as u8).collect()
+            }
             _ => panic!("Unsupported pixel format"),
         };
         (w, h, raw)
-    } else if path.extension().map_or(false, |e| e == "jpg" || e == "jpeg") {
+    } else if path
+        .extension()
+        .map_or(false, |e| e == "jpg" || e == "jpeg")
+    {
         let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
         let mut decoder = zune_image::codecs::jpeg::JpegDecoder::new_with_options(&data, opts);
         let raw = decoder.decode().expect("Failed to decode JPEG");
@@ -124,8 +129,8 @@ fn compute_gpu_score(
     ctx.stream.sync().expect("Failed to sync after upload");
 
     // Create Butteraugli instance and compute
-    let mut butteraugli =
-        Butteraugli::new(width as u32, height as u32).expect("Failed to create Butteraugli instance");
+    let mut butteraugli = Butteraugli::new(width as u32, height as u32)
+        .expect("Failed to create Butteraugli instance");
 
     butteraugli
         .compute(gpu_src.full_view(), gpu_dst.full_view())
@@ -211,9 +216,9 @@ fn test_jpeg_quality_q20() {
 /// Per-stage comparison test to identify divergence source
 #[test]
 fn test_jpeg_stage_comparison() {
-    use butteraugli::opsin::{srgb_to_linear, opsin_dynamics_image};
-    use butteraugli::psycho::separate_frequencies;
     use butteraugli::image::{Image3F, ImageF};
+    use butteraugli::opsin::{opsin_dynamics_image, srgb_to_linear};
+    use butteraugli::psycho::separate_frequencies;
 
     let ctx = CudaContext::new();
     let test_data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data");
@@ -221,7 +226,10 @@ fn test_jpeg_stage_comparison() {
     let (width, height, ref_data) = load_image(&test_data_dir.join("source.png"));
     let (_, _, dis_data) = load_image(&test_data_dir.join("q70.jpg"));
 
-    println!("\n=== JPEG Stage Comparison ({}x{}, Q70) ===\n", width, height);
+    println!(
+        "\n=== JPEG Stage Comparison ({}x{}, Q70) ===\n",
+        width, height
+    );
 
     // CPU pipeline
     fn to_linear_planar(rgb: &[u8], width: usize, height: usize) -> Image3F {
@@ -255,19 +263,29 @@ fn test_jpeg_stage_comparison() {
     // GPU pipeline
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
     let mut gpu_dst = Image::<u8, C<3>>::malloc(width as u32, height as u32).unwrap();
-    gpu_src.copy_from_cpu(&ref_data, ctx.stream.inner() as _).unwrap();
-    gpu_dst.copy_from_cpu(&dis_data, ctx.stream.inner() as _).unwrap();
+    gpu_src
+        .copy_from_cpu(&ref_data, ctx.stream.inner() as _)
+        .unwrap();
+    gpu_dst
+        .copy_from_cpu(&dis_data, ctx.stream.inner() as _)
+        .unwrap();
     ctx.stream.sync().unwrap();
 
     let mut butteraugli = Butteraugli::new(width as u32, height as u32).unwrap();
     // Use compute_with_options(false) to disable multi-scale so xyb1 isn't overwritten
-    let gpu_score = butteraugli.compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false).unwrap();
+    let gpu_score = butteraugli
+        .compute_with_options(gpu_src.full_view(), gpu_dst.full_view(), false)
+        .unwrap();
 
     // Get CPU score
     let cpu_score = compute_cpu_score(&ref_data, &dis_data, width, height);
 
-    println!("Final scores: CPU={:.6}, GPU={:.6}, error={:.2}%\n",
-        cpu_score, gpu_score, (gpu_score as f64 - cpu_score).abs() / cpu_score * 100.0);
+    println!(
+        "Final scores: CPU={:.6}, GPU={:.6}, error={:.2}%\n",
+        cpu_score,
+        gpu_score,
+        (gpu_score as f64 - cpu_score).abs() / cpu_score * 100.0
+    );
 
     // Compare XYB values
     let gpu_xyb1_x = butteraugli.get_xyb1(0);
@@ -278,13 +296,22 @@ fn test_jpeg_stage_comparison() {
     let cpu_xyb1_b = imagef_to_vec(xyb1_cpu.plane(2));
 
     fn compare_max_rel_err(cpu: &[f32], gpu: &[f32]) -> f32 {
-        cpu.iter().zip(gpu.iter())
-            .map(|(&c, &g)| if c.abs() > 1e-6 { (c - g).abs() / c.abs() } else { (c - g).abs() })
+        cpu.iter()
+            .zip(gpu.iter())
+            .map(|(&c, &g)| {
+                if c.abs() > 1e-6 {
+                    (c - g).abs() / c.abs()
+                } else {
+                    (c - g).abs()
+                }
+            })
             .fold(0.0f32, f32::max)
     }
 
     fn compare_rmse(cpu: &[f32], gpu: &[f32]) -> f32 {
-        let sum_sq: f64 = cpu.iter().zip(gpu.iter())
+        let sum_sq: f64 = cpu
+            .iter()
+            .zip(gpu.iter())
             .map(|(&c, &g)| ((c - g) as f64).powi(2))
             .sum();
         (sum_sq / cpu.len() as f64).sqrt() as f32
@@ -300,13 +327,28 @@ fn test_jpeg_stage_comparison() {
     println!("---------------|------------------------|------------------------|--------");
 
     let xyb_x_rmse = compare_rmse(&cpu_xyb1_x, &gpu_xyb1_x);
-    println!("XYB1 X         | {:22} | {:22} | {:.6}", range_str(&cpu_xyb1_x), range_str(&gpu_xyb1_x), xyb_x_rmse);
+    println!(
+        "XYB1 X         | {:22} | {:22} | {:.6}",
+        range_str(&cpu_xyb1_x),
+        range_str(&gpu_xyb1_x),
+        xyb_x_rmse
+    );
 
     let xyb_y_rmse = compare_rmse(&cpu_xyb1_y, &gpu_xyb1_y);
-    println!("XYB1 Y         | {:22} | {:22} | {:.6}", range_str(&cpu_xyb1_y), range_str(&gpu_xyb1_y), xyb_y_rmse);
+    println!(
+        "XYB1 Y         | {:22} | {:22} | {:.6}",
+        range_str(&cpu_xyb1_y),
+        range_str(&gpu_xyb1_y),
+        xyb_y_rmse
+    );
 
     let xyb_b_rmse = compare_rmse(&cpu_xyb1_b, &gpu_xyb1_b);
-    println!("XYB1 B         | {:22} | {:22} | {:.6}", range_str(&cpu_xyb1_b), range_str(&gpu_xyb1_b), xyb_b_rmse);
+    println!(
+        "XYB1 B         | {:22} | {:22} | {:.6}",
+        range_str(&cpu_xyb1_b),
+        range_str(&gpu_xyb1_b),
+        xyb_b_rmse
+    );
 
     // Compare frequency bands
     let gpu_uhf1_x = butteraugli.get_freq1(0, 0);
@@ -324,22 +366,52 @@ fn test_jpeg_stage_comparison() {
     let cpu_mf1_y = imagef_to_vec(&ps1.mf[1]);
 
     let uhf_x_rmse = compare_rmse(&cpu_uhf1_x, &gpu_uhf1_x);
-    println!("UHF1 X         | {:22} | {:22} | {:.6}", range_str(&cpu_uhf1_x), range_str(&gpu_uhf1_x), uhf_x_rmse);
+    println!(
+        "UHF1 X         | {:22} | {:22} | {:.6}",
+        range_str(&cpu_uhf1_x),
+        range_str(&gpu_uhf1_x),
+        uhf_x_rmse
+    );
 
     let uhf_y_rmse = compare_rmse(&cpu_uhf1_y, &gpu_uhf1_y);
-    println!("UHF1 Y         | {:22} | {:22} | {:.6}", range_str(&cpu_uhf1_y), range_str(&gpu_uhf1_y), uhf_y_rmse);
+    println!(
+        "UHF1 Y         | {:22} | {:22} | {:.6}",
+        range_str(&cpu_uhf1_y),
+        range_str(&gpu_uhf1_y),
+        uhf_y_rmse
+    );
 
     let hf_x_rmse = compare_rmse(&cpu_hf1_x, &gpu_hf1_x);
-    println!("HF1 X          | {:22} | {:22} | {:.6}", range_str(&cpu_hf1_x), range_str(&gpu_hf1_x), hf_x_rmse);
+    println!(
+        "HF1 X          | {:22} | {:22} | {:.6}",
+        range_str(&cpu_hf1_x),
+        range_str(&gpu_hf1_x),
+        hf_x_rmse
+    );
 
     let hf_y_rmse = compare_rmse(&cpu_hf1_y, &gpu_hf1_y);
-    println!("HF1 Y          | {:22} | {:22} | {:.6}", range_str(&cpu_hf1_y), range_str(&gpu_hf1_y), hf_y_rmse);
+    println!(
+        "HF1 Y          | {:22} | {:22} | {:.6}",
+        range_str(&cpu_hf1_y),
+        range_str(&gpu_hf1_y),
+        hf_y_rmse
+    );
 
     let mf_x_rmse = compare_rmse(&cpu_mf1_x, &gpu_mf1_x);
-    println!("MF1 X          | {:22} | {:22} | {:.6}", range_str(&cpu_mf1_x), range_str(&gpu_mf1_x), mf_x_rmse);
+    println!(
+        "MF1 X          | {:22} | {:22} | {:.6}",
+        range_str(&cpu_mf1_x),
+        range_str(&gpu_mf1_x),
+        mf_x_rmse
+    );
 
     let mf_y_rmse = compare_rmse(&cpu_mf1_y, &gpu_mf1_y);
-    println!("MF1 Y          | {:22} | {:22} | {:.6}", range_str(&cpu_mf1_y), range_str(&gpu_mf1_y), mf_y_rmse);
+    println!(
+        "MF1 Y          | {:22} | {:22} | {:.6}",
+        range_str(&cpu_mf1_y),
+        range_str(&gpu_mf1_y),
+        mf_y_rmse
+    );
 
     // Compare block_diff values
     let gpu_ac_x = butteraugli.get_block_diff_ac(0);
@@ -350,26 +422,48 @@ fn test_jpeg_stage_comparison() {
     let gpu_dc_b = butteraugli.get_block_diff_dc(2);
 
     println!("\nBlock diff AC ranges:");
-    println!("  X: GPU max={:.6}", gpu_ac_x.iter().cloned().fold(0.0f32, f32::max));
-    println!("  Y: GPU max={:.6}", gpu_ac_y.iter().cloned().fold(0.0f32, f32::max));
-    println!("  B: GPU max={:.6}", gpu_ac_b.iter().cloned().fold(0.0f32, f32::max));
+    println!(
+        "  X: GPU max={:.6}",
+        gpu_ac_x.iter().cloned().fold(0.0f32, f32::max)
+    );
+    println!(
+        "  Y: GPU max={:.6}",
+        gpu_ac_y.iter().cloned().fold(0.0f32, f32::max)
+    );
+    println!(
+        "  B: GPU max={:.6}",
+        gpu_ac_b.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     println!("\nBlock diff DC ranges:");
-    println!("  X: GPU max={:.6}", gpu_dc_x.iter().cloned().fold(0.0f32, f32::max));
-    println!("  Y: GPU max={:.6}", gpu_dc_y.iter().cloned().fold(0.0f32, f32::max));
-    println!("  B: GPU max={:.6}", gpu_dc_b.iter().cloned().fold(0.0f32, f32::max));
+    println!(
+        "  X: GPU max={:.6}",
+        gpu_dc_x.iter().cloned().fold(0.0f32, f32::max)
+    );
+    println!(
+        "  Y: GPU max={:.6}",
+        gpu_dc_y.iter().cloned().fold(0.0f32, f32::max)
+    );
+    println!(
+        "  B: GPU max={:.6}",
+        gpu_dc_b.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // Compare mask
     let gpu_mask = butteraugli.get_mask();
-    println!("\nMask range: GPU min={:.6}, max={:.6}",
+    println!(
+        "\nMask range: GPU min={:.6}, max={:.6}",
         gpu_mask.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_mask.iter().cloned().fold(0.0f32, f32::max));
+        gpu_mask.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // Diffmap
     let gpu_diffmap = butteraugli.get_diffmap();
-    println!("\nDiffmap range: GPU min={:.6}, max={:.6}",
+    println!(
+        "\nDiffmap range: GPU min={:.6}, max={:.6}",
         gpu_diffmap.iter().cloned().fold(f32::INFINITY, f32::min),
-        gpu_diffmap.iter().cloned().fold(0.0f32, f32::max));
+        gpu_diffmap.iter().cloned().fold(0.0f32, f32::max)
+    );
 
     // Find largest error contributors
     println!("\n=== Error Analysis ===");
@@ -408,8 +502,14 @@ fn test_jpeg_quality_summary() {
 
     let (ref_w, ref_h, ref_data) = load_image(&test_data_dir.join("source.png"));
 
-    println!("\n=== Butteraugli JPEG Quality Summary ({}x{}) ===", ref_w, ref_h);
-    println!("{:<10} {:>12} {:>12} {:>10}", "Quality", "CPU Score", "GPU Score", "Error %");
+    println!(
+        "\n=== Butteraugli JPEG Quality Summary ({}x{}) ===",
+        ref_w, ref_h
+    );
+    println!(
+        "{:<10} {:>12} {:>12} {:>10}",
+        "Quality", "CPU Score", "GPU Score", "Error %"
+    );
     println!("{}", "-".repeat(48));
 
     for quality in ["q90", "q70", "q45", "q20", "q5", "q1"] {
@@ -477,7 +577,7 @@ fn test_context_reuse_multiple_images() {
                 None
             }
         })
-        .take(4)  // Take first 4 matching images
+        .take(4) // Take first 4 matching images
         .collect();
 
     if all_images.len() < 2 {
@@ -485,18 +585,22 @@ fn test_context_reuse_multiple_images() {
         return;
     }
 
-    let (width, height) = (all_images[0].1.0, all_images[0].1.1);
+    let (width, height) = (all_images[0].1 .0, all_images[0].1 .1);
 
     // Create GPU buffers and Butteraugli instance once
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32)
         .expect("Failed to allocate GPU source");
-    let mut gpu_dst = gpu_src.malloc_same_size()
+    let mut gpu_dst = gpu_src
+        .malloc_same_size()
         .expect("Failed to allocate GPU distorted");
-    let mut butteraugli = Butteraugli::new(width as u32, height as u32)
-        .expect("Failed to create Butteraugli");
+    let mut butteraugli =
+        Butteraugli::new(width as u32, height as u32).expect("Failed to create Butteraugli");
 
     println!("\n=== Context Reuse Test ({}x{}) ===", width, height);
-    println!("{:<15} {:>12} {:>12} {:>10}", "Image", "CPU Score", "GPU Score", "Error %");
+    println!(
+        "{:<15} {:>12} {:>12} {:>10}",
+        "Image", "CPU Score", "GPU Score", "Error %"
+    );
     println!("{}", "-".repeat(55));
 
     let mut max_error = 0.0f64;
@@ -507,7 +611,8 @@ fn test_context_reuse_multiple_images() {
             assert_eq!((*w, *h), (width, height), "Image dimensions must match");
 
             // Create a "distorted" version by adding noise (simple test)
-            let dis_data: Vec<u8> = ref_data.iter()
+            let dis_data: Vec<u8> = ref_data
+                .iter()
                 .enumerate()
                 .map(|(i, &v)| {
                     // Add deterministic noise based on position
@@ -520,9 +625,11 @@ fn test_context_reuse_multiple_images() {
             let cpu_score = compute_cpu_score(ref_data, &dis_data, width, height);
 
             // GPU Butteraugli (reusing buffers and instance)
-            gpu_src.copy_from_cpu(ref_data, ctx.stream.inner() as _)
+            gpu_src
+                .copy_from_cpu(ref_data, ctx.stream.inner() as _)
                 .expect("Failed to upload source");
-            gpu_dst.copy_from_cpu(&dis_data, ctx.stream.inner() as _)
+            gpu_dst
+                .copy_from_cpu(&dis_data, ctx.stream.inner() as _)
                 .expect("Failed to upload distorted");
             ctx.stream.sync().expect("Failed to sync");
 
@@ -540,7 +647,10 @@ fn test_context_reuse_multiple_images() {
 
             println!(
                 "{:<15} {:>12.4} {:>12.4} {:>9.2}%",
-                format!("{}[{}]", name, iteration), cpu_score, gpu_score, rel_error
+                format!("{}[{}]", name, iteration),
+                cpu_score,
+                gpu_score,
+                rel_error
             );
 
             // Fail immediately on massive divergence (indicates stale state bug)
@@ -599,18 +709,25 @@ fn test_extreme_distortion_context_reuse() {
         return;
     }
 
-    let (width, height) = (images[0].1.0, images[0].1.1);
+    let (width, height) = (images[0].1 .0, images[0].1 .1);
 
     // Create buffers
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32)
         .expect("Failed to allocate GPU source");
-    let mut gpu_dst = gpu_src.malloc_same_size()
+    let mut gpu_dst = gpu_src
+        .malloc_same_size()
         .expect("Failed to allocate GPU distorted");
-    let mut butteraugli = Butteraugli::new(width as u32, height as u32)
-        .expect("Failed to create Butteraugli");
+    let mut butteraugli =
+        Butteraugli::new(width as u32, height as u32).expect("Failed to create Butteraugli");
 
-    println!("\n=== Extreme Distortion Context Reuse Test ({}x{}) ===", width, height);
-    println!("{:<20} {:>12} {:>12} {:>10}", "Test", "CPU Score", "GPU Score", "Error %");
+    println!(
+        "\n=== Extreme Distortion Context Reuse Test ({}x{}) ===",
+        width, height
+    );
+    println!(
+        "{:<20} {:>12} {:>12} {:>10}",
+        "Test", "CPU Score", "GPU Score", "Error %"
+    );
     println!("{}", "-".repeat(60));
 
     // Simulate Q1-like extreme distortion by aggressive quantization
@@ -633,8 +750,12 @@ fn test_extreme_distortion_context_reuse() {
         let cpu_score = compute_cpu_score(ref_data, &dis_data, *w, *h);
 
         // GPU score
-        gpu_src.copy_from_cpu(ref_data, ctx.stream.inner() as _).unwrap();
-        gpu_dst.copy_from_cpu(&dis_data, ctx.stream.inner() as _).unwrap();
+        gpu_src
+            .copy_from_cpu(ref_data, ctx.stream.inner() as _)
+            .unwrap();
+        gpu_dst
+            .copy_from_cpu(&dis_data, ctx.stream.inner() as _)
+            .unwrap();
         ctx.stream.sync().unwrap();
 
         let gpu_score = butteraugli
@@ -665,7 +786,10 @@ fn test_extreme_distortion_context_reuse() {
         assert!(
             rel_error < 15.0,
             "Error too high for {}: GPU={:.4} CPU={:.4} error={:.1}%",
-            name, gpu_score, cpu_score, rel_error
+            name,
+            gpu_score,
+            cpu_score,
+            rel_error
         );
     }
 }
@@ -696,14 +820,17 @@ fn test_known_high_variance_cases() {
 
     // Test a mix of landscape and portrait images
     let test_cases: Vec<(&str, usize, usize)> = vec![
-        ("4.png", 512, 768),   // Portrait - 18% error case
-        ("5.png", 768, 512),   // Landscape - 15% error case
-        ("12.png", 768, 512),  // Another landscape test
+        ("4.png", 512, 768),  // Portrait - 18% error case
+        ("5.png", 768, 512),  // Landscape - 15% error case
+        ("12.png", 768, 512), // Another landscape test
     ];
 
     println!("\n=== Known High-Variance Test Cases ===");
     println!("These document known variance at extreme distortion levels.");
-    println!("{:<12} {:>8} {:>12} {:>12} {:>10}", "Image", "Size", "CPU Score", "GPU Score", "Error %");
+    println!(
+        "{:<12} {:>8} {:>12} {:>12} {:>10}",
+        "Image", "Size", "CPU Score", "GPU Score", "Error %"
+    );
     println!("{}", "-".repeat(65));
 
     let mut max_error = 0.0f64;
@@ -722,7 +849,8 @@ fn test_known_high_variance_cases() {
         }
 
         // Create Q1-like extreme distortion (more aggressive than previous test)
-        let dis_data: Vec<u8> = ref_data.iter()
+        let dis_data: Vec<u8> = ref_data
+            .iter()
             .map(|&v| {
                 // Extreme quantization: 8 levels, mimics Q1 JPEG
                 let level = v / 32;
@@ -734,15 +862,20 @@ fn test_known_high_variance_cases() {
         let cpu_score = compute_cpu_score(&ref_data, &dis_data, w, h);
 
         // GPU Butteraugli - create fresh instance for each dimension
-        let mut gpu_src = Image::<u8, C<3>>::malloc(w as u32, h as u32)
-            .expect("Failed to allocate GPU source");
-        let mut gpu_dst = gpu_src.malloc_same_size()
+        let mut gpu_src =
+            Image::<u8, C<3>>::malloc(w as u32, h as u32).expect("Failed to allocate GPU source");
+        let mut gpu_dst = gpu_src
+            .malloc_same_size()
             .expect("Failed to allocate GPU distorted");
-        let mut butteraugli = Butteraugli::new(w as u32, h as u32)
-            .expect("Failed to create Butteraugli");
+        let mut butteraugli =
+            Butteraugli::new(w as u32, h as u32).expect("Failed to create Butteraugli");
 
-        gpu_src.copy_from_cpu(&ref_data, ctx.stream.inner() as _).unwrap();
-        gpu_dst.copy_from_cpu(&dis_data, ctx.stream.inner() as _).unwrap();
+        gpu_src
+            .copy_from_cpu(&ref_data, ctx.stream.inner() as _)
+            .unwrap();
+        gpu_dst
+            .copy_from_cpu(&dis_data, ctx.stream.inner() as _)
+            .unwrap();
         ctx.stream.sync().unwrap();
 
         let gpu_score = butteraugli
@@ -767,15 +900,22 @@ fn test_known_high_variance_cases() {
         assert!(
             rel_error < 25.0,
             "Unexpected regression: {} error={:.1}% exceeds known variance",
-            name, rel_error
+            name,
+            rel_error
         );
     }
 
-    println!("\nMax error: {:.2}% (known variance at extreme distortion)", max_error);
+    println!(
+        "\nMax error: {:.2}% (known variance at extreme distortion)",
+        max_error
+    );
 
     // Document that some error is expected
     if max_error > 10.0 {
-        println!("NOTE: High variance (>{:.0}%) is expected at extreme distortion levels.", 10.0);
+        println!(
+            "NOTE: High variance (>{:.0}%) is expected at extreme distortion levels.",
+            10.0
+        );
         println!("      This is a limitation of the GPU implementation, not a regression.");
     }
 }

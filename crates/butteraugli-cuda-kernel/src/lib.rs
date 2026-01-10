@@ -9,10 +9,10 @@
 #![feature(asm_experimental_arch)]
 #![feature(array_ptr_get)]
 
-mod colors;
 mod blur;
-mod downscale;
-mod malta;
-mod frequency;
-mod masking;
+mod colors;
 mod diffmap;
+mod downscale;
+mod frequency;
+mod malta;
+mod masking;

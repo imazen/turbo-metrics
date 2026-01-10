@@ -212,7 +212,8 @@ fn compute_gpu_score(
     // Allocate GPU images
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32)
         .expect("Failed to allocate GPU source image");
-    let mut gpu_dst = gpu_src.malloc_same_size()
+    let mut gpu_dst = gpu_src
+        .malloc_same_size()
         .expect("Failed to allocate GPU distorted image");
 
     // Upload to GPU
@@ -385,7 +386,11 @@ fn test_uniform_gray_shifts() {
         let status = if r.passed { "PASS" } else { "FAIL" };
         println!(
             "[{}] {}: CPU={:.4}, GPU={:.4}, rel_err={:.2}%",
-            status, r.name, r.cpu_score, r.gpu_score as f64, r.rel_error * 100.0
+            status,
+            r.name,
+            r.cpu_score,
+            r.gpu_score as f64,
+            r.rel_error * 100.0
         );
     }
 
@@ -433,7 +438,11 @@ fn test_gradients() {
         let status = if r.passed { "PASS" } else { "FAIL" };
         println!(
             "[{}] {}: CPU={:.4}, GPU={:.4}, rel_err={:.2}%",
-            status, r.name, r.cpu_score, r.gpu_score as f64, r.rel_error * 100.0
+            status,
+            r.name,
+            r.cpu_score,
+            r.gpu_score as f64,
+            r.rel_error * 100.0
         );
     }
 
@@ -481,7 +490,11 @@ fn test_checkerboards() {
         let status = if r.passed { "PASS" } else { "FAIL" };
         println!(
             "[{}] {}: CPU={:.4}, GPU={:.4}, rel_err={:.2}%",
-            status, r.name, r.cpu_score, r.gpu_score as f64, r.rel_error * 100.0
+            status,
+            r.name,
+            r.cpu_score,
+            r.gpu_score as f64,
+            r.rel_error * 100.0
         );
     }
 
@@ -525,7 +538,11 @@ fn test_noise_patterns() {
         let status = if r.passed { "PASS" } else { "FAIL" };
         println!(
             "[{}] {}: CPU={:.4}, GPU={:.4}, rel_err={:.2}%",
-            status, r.name, r.cpu_score, r.gpu_score as f64, r.rel_error * 100.0
+            status,
+            r.name,
+            r.cpu_score,
+            r.gpu_score as f64,
+            r.rel_error * 100.0
         );
     }
 
@@ -571,7 +588,11 @@ fn test_edges() {
         let status = if r.passed { "PASS" } else { "FAIL" };
         println!(
             "[{}] {}: CPU={:.4}, GPU={:.4}, rel_err={:.2}%",
-            status, r.name, r.cpu_score, r.gpu_score as f64, r.rel_error * 100.0
+            status,
+            r.name,
+            r.cpu_score,
+            r.gpu_score as f64,
+            r.rel_error * 100.0
         );
     }
 
@@ -635,7 +656,11 @@ fn test_extreme_cases() {
         let status = if r.passed { "PASS" } else { "FAIL" };
         println!(
             "[{}] {}: CPU={:.4}, GPU={:.4}, rel_err={:.2}%",
-            status, r.name, r.cpu_score, r.gpu_score as f64, r.rel_error * 100.0
+            status,
+            r.name,
+            r.cpu_score,
+            r.gpu_score as f64,
+            r.rel_error * 100.0
         );
     }
 
@@ -704,7 +729,15 @@ fn test_comprehensive_parity_summary() {
             (COMPLEX_PATTERN_TOLERANCE, ABSOLUTE_TOLERANCE_FLOOR)
         };
 
-        let result = TestResult::new(name, width, height, cpu_score, gpu_score as f64, tolerance.0, tolerance.1);
+        let result = TestResult::new(
+            name,
+            width,
+            height,
+            cpu_score,
+            gpu_score as f64,
+            tolerance.0,
+            tolerance.1,
+        );
         all_results.push(result);
     }
 
@@ -713,10 +746,7 @@ fn test_comprehensive_parity_summary() {
     let passed = all_results.iter().filter(|r| r.passed).count();
     let failed = total - passed;
 
-    let max_abs_error = all_results
-        .iter()
-        .map(|r| r.abs_error)
-        .fold(0.0, f64::max);
+    let max_abs_error = all_results.iter().map(|r| r.abs_error).fold(0.0, f64::max);
     let max_rel_error = all_results
         .iter()
         .filter(|r| r.cpu_score.abs() > 0.01) // Exclude near-zero scores
@@ -742,10 +772,22 @@ fn test_comprehensive_parity_summary() {
     }
 
     println!("╠════════════════════════════════════════════════════════════════╣");
-    println!("║ Total: {} tests, {} passed, {} failed                           ║", total, passed, failed);
-    println!("║ Max absolute error: {:.6}                                    ║", max_abs_error);
-    println!("║ Max relative error: {:.2}%                                       ║", max_rel_error * 100.0);
-    println!("║ Mean absolute error: {:.6}                                   ║", mean_abs_error);
+    println!(
+        "║ Total: {} tests, {} passed, {} failed                           ║",
+        total, passed, failed
+    );
+    println!(
+        "║ Max absolute error: {:.6}                                    ║",
+        max_abs_error
+    );
+    println!(
+        "║ Max relative error: {:.2}%                                       ║",
+        max_rel_error * 100.0
+    );
+    println!(
+        "║ Mean absolute error: {:.6}                                   ║",
+        mean_abs_error
+    );
     println!("╚════════════════════════════════════════════════════════════════╝");
 
     // Strict assertion

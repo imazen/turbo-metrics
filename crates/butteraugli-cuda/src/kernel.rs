@@ -444,9 +444,9 @@ impl Kernel {
         temp: *mut f32,
         width: usize,
         height: usize,
-        w0: f32,  // center weight
-        w1: f32,  // 1-pixel offset weight
-        w2: f32,  // 2-pixel offset weight
+        w0: f32, // center weight
+        w1: f32, // 1-pixel offset weight
+        w2: f32, // 2-pixel offset weight
     ) {
         // Horizontal pass: src -> temp (transposed)
         unsafe {
@@ -503,7 +503,16 @@ impl Kernel {
                 .launch(
                     &Self::launch_config_malta(width as u32, height as u32),
                     stream,
-                    kernel_params!(lum0, lum1, block_diff_ac, width, height, norm2_0gt1, norm2_0lt1, norm1,),
+                    kernel_params!(
+                        lum0,
+                        lum1,
+                        block_diff_ac,
+                        width,
+                        height,
+                        norm2_0gt1,
+                        norm2_0lt1,
+                        norm1,
+                    ),
                 )
                 .expect("malta_diff_map launch failed");
         }
@@ -542,7 +551,16 @@ impl Kernel {
                 .launch(
                     &Self::launch_config_malta(width as u32, height as u32),
                     stream,
-                    kernel_params!(lum0, lum1, block_diff_ac, width, height, norm2_0gt1, norm2_0lt1, norm1,),
+                    kernel_params!(
+                        lum0,
+                        lum1,
+                        block_diff_ac,
+                        width,
+                        height,
+                        norm2_0gt1,
+                        norm2_0lt1,
+                        norm1,
+                    ),
                 )
                 .expect("malta_diff_map_lf launch failed");
         }
@@ -724,13 +742,7 @@ impl Kernel {
     /// Separate HF and UHF bands for Y channel (modifies both in place)
     /// Used after blur: hf = blur(HF_raw), uhf = HF_raw
     /// After: hf = amplify(max_clamp(hf) * HF_MUL), uhf = max_clamp(uhf - max_clamp(hf)) * UHF_MUL
-    pub fn separate_hf_uhf(
-        &self,
-        stream: &CuStream,
-        hf: *mut f32,
-        uhf: *mut f32,
-        size: usize,
-    ) {
+    pub fn separate_hf_uhf(&self, stream: &CuStream, hf: *mut f32, uhf: *mut f32, size: usize) {
         unsafe {
             self.separate_hf_uhf
                 .launch(
@@ -788,13 +800,7 @@ impl Kernel {
 
     /// Remove range around zero (standalone)
     /// arr = remove_range_around_zero(arr, w)
-    pub fn remove_range(
-        &self,
-        stream: &CuStream,
-        arr: *mut f32,
-        size: usize,
-        w: f32,
-    ) {
+    pub fn remove_range(&self, stream: &CuStream, arr: *mut f32, size: usize, w: f32) {
         unsafe {
             self.remove_range
                 .launch(
@@ -808,13 +814,7 @@ impl Kernel {
 
     /// Amplify range around zero (standalone)
     /// arr = amplify_range_around_zero(arr, w)
-    pub fn amplify_range(
-        &self,
-        stream: &CuStream,
-        arr: *mut f32,
-        size: usize,
-        w: f32,
-    ) {
+    pub fn amplify_range(&self, stream: &CuStream, arr: *mut f32, size: usize, w: f32) {
         unsafe {
             self.amplify_range
                 .launch(
@@ -870,13 +870,7 @@ impl Kernel {
     }
 
     /// Precompute diff values for masking
-    pub fn diff_precompute(
-        &self,
-        stream: &CuStream,
-        src: *const f32,
-        dst: *mut f32,
-        size: usize,
-    ) {
+    pub fn diff_precompute(&self, stream: &CuStream, src: *const f32, dst: *mut f32, size: usize) {
         unsafe {
             self.diff_precompute
                 .launch(
@@ -932,14 +926,9 @@ impl Kernel {
     pub fn clear_buffer(&self, stream: &CuStream, dst: *mut f32, size: usize) {
         // Use cudaMemsetAsync via driver API
         unsafe {
-            cudarse_driver::sys::cuMemsetD32Async(
-                dst as u64,
-                0,
-                size,
-                stream.raw(),
-            )
-            .result()
-            .expect("clear_buffer failed");
+            cudarse_driver::sys::cuMemsetD32Async(dst as u64, 0, size, stream.raw())
+                .result()
+                .expect("clear_buffer failed");
         }
     }
 }

@@ -44,16 +44,16 @@ pub trait AsPlane {
     /// * `rect`: view rectangle given relative to this view.
     ///
     /// returns: The view or [None] if `rect` does not fit this view.
-    fn view_checked(&self, rect: &Rect) -> Option<PlaneRef<Self>> {
-        if self.rect().contains(&rect) {
+    fn view_checked(&self, rect: &Rect) -> Option<PlaneRef<'_, Self>> {
+        if self.rect().contains(rect) {
             Some(self.view(rect))
         } else {
             None
         }
     }
 
-    fn view(&self, rect: &Rect) -> PlaneRef<Self> {
-        assert!(self.rect().contains(&rect));
+    fn view(&self, rect: &Rect) -> PlaneRef<'_, Self> {
+        assert!(self.rect().contains(rect));
         PlaneRef {
             rect: rect.with_base(&self.absolute_rect()),
             parent: self,
@@ -72,8 +72,8 @@ pub trait AsPlaneMut: AsPlane {
     /// * `rect`: view rectangle given relative to this view.
     ///
     /// returns: The view or [None] if `rect` does not fit this view.
-    fn view_mut(&mut self, rect: &Rect) -> Option<PlaneMut<Self>> {
-        if self.rect().contains(&rect) {
+    fn view_mut(&mut self, rect: &Rect) -> Option<PlaneMut<'_, Self>> {
+        if self.rect().contains(rect) {
             Some(PlaneMut {
                 rect: rect.with_base(&self.absolute_rect()),
                 parent: self,

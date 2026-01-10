@@ -52,12 +52,17 @@ fn benchmark_gpu_throughput() {
         let (ref_data, dis_data) = create_test_images(width, height);
 
         let mut dssim = Dssim::new(width, height, &stream).unwrap();
-        let mut ref_gpu: Image<u8, cudarse_npp::image::C<3>> = Image::malloc(width, height).unwrap();
+        let mut ref_gpu: Image<u8, cudarse_npp::image::C<3>> =
+            Image::malloc(width, height).unwrap();
         let mut dis_gpu = ref_gpu.malloc_same_size().unwrap();
 
         // Upload images
-        ref_gpu.copy_from_cpu(&ref_data, stream.inner() as _).unwrap();
-        dis_gpu.copy_from_cpu(&dis_data, stream.inner() as _).unwrap();
+        ref_gpu
+            .copy_from_cpu(&ref_data, stream.inner() as _)
+            .unwrap();
+        dis_gpu
+            .copy_from_cpu(&dis_data, stream.inner() as _)
+            .unwrap();
         stream.sync().unwrap();
 
         // Warmup
@@ -77,7 +82,10 @@ fn benchmark_gpu_throughput() {
         let ms_per_iter = elapsed.as_secs_f64() * 1000.0 / iterations as f64;
         let imgs_per_sec = iterations as f64 / elapsed.as_secs_f64();
 
-        println!("{}: {:.2} ms/image ({:.1} images/sec)", name, ms_per_iter, imgs_per_sec);
+        println!(
+            "{}: {:.2} ms/image ({:.1} images/sec)",
+            name, ms_per_iter, imgs_per_sec
+        );
     }
 
     println!();

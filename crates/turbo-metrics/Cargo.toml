@@ -7,7 +7,7 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 license = "AGPL-3.0-or-later"
-rust-version = "1.79"
+rust-version = "1.92"
 
 [dependencies]
 codec-bitstream = { workspace = true }
@@ -19,6 +19,8 @@ image = { workspace = true }
 matroska-demuxer = { workspace = true }
 serde = { workspace = true, optional = true }
 ssimulacra2-cuda = { workspace = true }
+butteraugli-cuda = { workspace = true }
+dssim-cuda = { workspace = true }
 tracing = { workspace = true }
 quick-stats = { workspace = true }
 zune-core = { workspace = true }

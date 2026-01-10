@@ -601,7 +601,10 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_kernel(
 
     // Compute Malta LF filter at thread's position
     let shared_pos = (ty + HALO) * SHARED_SIZE + (tx + HALO);
-    let result = malta_unit_lf((MALTA_DIFFS.as_ptr() as *const f32).add(shared_pos), SHARED_SIZE as isize);
+    let result = malta_unit_lf(
+        (MALTA_DIFFS.as_ptr() as *const f32).add(shared_pos),
+        SHARED_SIZE as isize,
+    );
 
     // Add to output (accumulate)
     let out_idx = y * width + x;

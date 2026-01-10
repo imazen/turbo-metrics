@@ -7,9 +7,9 @@ use nvptx_std::math::StdMathExt;
 
 // CombineChannelsForMasking multipliers - from libjxl butteraugli.cc
 // COMBINE_CHANNELS_MULS = [2.5, 0.4, 0.4]
-const COMBINE_MUL_X: f32 = 2.5;     // For (uhf_x + hf_x)
+const COMBINE_MUL_X: f32 = 2.5; // For (uhf_x + hf_x)
 const COMBINE_MUL_Y_UHF: f32 = 0.4; // For uhf_y
-const COMBINE_MUL_Y_HF: f32 = 0.4;  // For hf_y
+const COMBINE_MUL_Y_HF: f32 = 0.4; // For hf_y
 
 const DIFF_PRECOMPUTE_MUL: f32 = 6.19424080439;
 const DIFF_PRECOMPUTE_BIAS: f32 = 12.61050594197;
@@ -52,9 +52,9 @@ pub unsafe extern "ptx-kernel" fn combine_channels_for_masking_kernel(
 /// This is called after mask computation to add additional psychovisual weighting
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn mask_to_error_mul_kernel(
-    blurred1: *const f32,  // Blurred UHF Y from image 1
-    blurred2: *const f32,  // Blurred UHF Y from image 2
-    block_diff_ac: *mut f32,  // Y channel of block_diff_ac (accumulator)
+    blurred1: *const f32,    // Blurred UHF Y from image 1
+    blurred2: *const f32,    // Blurred UHF Y from image 2
+    block_diff_ac: *mut f32, // Y channel of block_diff_ac (accumulator)
     size: usize,
 ) {
     let idx = (core::arch::nvptx::_block_idx_x() as usize

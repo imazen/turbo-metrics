@@ -7,7 +7,7 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 license = "AGPL-3.0-or-later"
-rust-version = "1.79"
+rust-version = "1.92"
 
 [[bin]]
 name = "turbo-metrics"

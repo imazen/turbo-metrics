@@ -395,8 +395,7 @@ impl Dssim {
 
         // Sum the absolute differences to get MAD sum
         let mut mad_sum: f64 = 0.0;
-        s.temp1
-            .sum_into(&mut self.sum_scratch, &mut mad_sum, ctx)?;
+        s.temp1.sum_into(&mut self.sum_scratch, &mut mad_sum, ctx)?;
 
         // Wait for sum to complete
         stream.sync().map_err(Error::Cuda)?;

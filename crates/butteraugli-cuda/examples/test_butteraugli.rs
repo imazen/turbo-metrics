@@ -9,11 +9,11 @@ use std::time::Instant;
 
 use zune_image::codecs::png::zune_core::options::DecoderOptions;
 
+use butteraugli_cuda::Butteraugli;
 use cudarse_driver::CuStream;
 use cudarse_npp::image::isu::Malloc;
 use cudarse_npp::image::{Image, Img, ImgMut, C};
 use cudarse_npp::set_stream;
-use butteraugli_cuda::Butteraugli;
 
 fn main() {
     cudarse_driver::init_cuda_and_primary_ctx().expect("Could not initialize CUDA API");
@@ -25,17 +25,13 @@ fn main() {
         let ref_path = &args[1];
         let dis_path = &args[2];
 
-        let ref_img = zune_image::image::Image::open_with_options(
-            ref_path,
-            DecoderOptions::new_fast(),
-        )
-        .expect("Failed to load reference image");
+        let ref_img =
+            zune_image::image::Image::open_with_options(ref_path, DecoderOptions::new_fast())
+                .expect("Failed to load reference image");
 
-        let dis_img = zune_image::image::Image::open_with_options(
-            dis_path,
-            DecoderOptions::new_fast(),
-        )
-        .expect("Failed to load distorted image");
+        let dis_img =
+            zune_image::image::Image::open_with_options(dis_path, DecoderOptions::new_fast())
+                .expect("Failed to load distorted image");
 
         assert_eq!(
             ref_img.dimensions(),
@@ -60,9 +56,9 @@ fn main() {
         for y in 0..height {
             for x in 0..width {
                 let idx = (y * width + x) * 3;
-                ref_bytes[idx] = ((x as f32 / width as f32) * 255.0) as u8;     // R
+                ref_bytes[idx] = ((x as f32 / width as f32) * 255.0) as u8; // R
                 ref_bytes[idx + 1] = ((y as f32 / height as f32) * 255.0) as u8; // G
-                ref_bytes[idx + 2] = 128;                                         // B
+                ref_bytes[idx + 2] = 128; // B
             }
         }
 
@@ -88,8 +84,12 @@ fn main() {
     let mut gpu_dis = gpu_ref.malloc_same_size().unwrap();
 
     // Upload to GPU
-    gpu_ref.copy_from_cpu(&ref_bytes, stream.inner() as _).unwrap();
-    gpu_dis.copy_from_cpu(&dis_bytes, stream.inner() as _).unwrap();
+    gpu_ref
+        .copy_from_cpu(&ref_bytes, stream.inner() as _)
+        .unwrap();
+    gpu_dis
+        .copy_from_cpu(&dis_bytes, stream.inner() as _)
+        .unwrap();
     stream.sync().unwrap();
 
     // Create Butteraugli instance

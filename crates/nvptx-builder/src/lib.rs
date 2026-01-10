@@ -151,7 +151,7 @@ pub fn link_llvm_ir(bitcode: &str) {
     let mut hash = DefaultHasher::new();
     bitcode.hash(&mut hash);
     let hash = hash.finish();
-    let path = out.join(&format!("{:x}.ll", hash));
+    let path = out.join(format!("{:x}.ll", hash));
     fs::write(&path, bitcode).unwrap();
     link_llvm_ir_file(&path);
 }

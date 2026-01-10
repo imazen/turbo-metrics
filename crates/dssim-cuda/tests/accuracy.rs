@@ -95,8 +95,12 @@ fn compute_dssim_gpu(
     stream: &CuStream,
 ) -> f64 {
     // Upload images to GPU
-    ref_gpu.copy_from_cpu(ref_data, stream.inner() as _).unwrap();
-    dis_gpu.copy_from_cpu(dis_data, stream.inner() as _).unwrap();
+    ref_gpu
+        .copy_from_cpu(ref_data, stream.inner() as _)
+        .unwrap();
+    dis_gpu
+        .copy_from_cpu(dis_data, stream.inner() as _)
+        .unwrap();
     stream.sync().unwrap();
 
     // Compute DSSIM
@@ -125,7 +129,14 @@ fn test_identical_images() {
     let mut dis_gpu = ref_gpu.malloc_same_size().unwrap();
 
     let gpu_score = compute_dssim_gpu(
-        &img, &img, width, height, &mut dssim, &mut ref_gpu, &mut dis_gpu, &stream,
+        &img,
+        &img,
+        width,
+        height,
+        &mut dssim,
+        &mut ref_gpu,
+        &mut dis_gpu,
+        &stream,
     );
 
     println!("Identical images: CPU={cpu_score:.6}, GPU={gpu_score:.6}");
@@ -164,7 +175,14 @@ fn test_slightly_different_images() {
     let mut dis_gpu = ref_gpu.malloc_same_size().unwrap();
 
     let gpu_score = compute_dssim_gpu(
-        &ref_img, &dis_img, width, height, &mut dssim, &mut ref_gpu, &mut dis_gpu, &stream,
+        &ref_img,
+        &dis_img,
+        width,
+        height,
+        &mut dssim,
+        &mut ref_gpu,
+        &mut dis_gpu,
+        &stream,
     );
 
     println!("Slightly different: CPU={cpu_score:.6}, GPU={gpu_score:.6}");
@@ -207,7 +225,14 @@ fn test_very_different_images() {
     let mut dis_gpu = ref_gpu.malloc_same_size().unwrap();
 
     let gpu_score = compute_dssim_gpu(
-        &ref_img, &dis_img, width, height, &mut dssim, &mut ref_gpu, &mut dis_gpu, &stream,
+        &ref_img,
+        &dis_img,
+        width,
+        height,
+        &mut dssim,
+        &mut ref_gpu,
+        &mut dis_gpu,
+        &stream,
     );
 
     println!("Very different: CPU={cpu_score:.6}, GPU={gpu_score:.6}");
@@ -248,11 +273,16 @@ fn load_image(path: &Path) -> (usize, usize, Vec<u8>) {
         let (w, h) = decoder.dimensions().unwrap();
         let raw = match result {
             zune_core::result::DecodingResult::U8(v) => v,
-            zune_core::result::DecodingResult::U16(v) => v.iter().map(|&x| (x >> 8) as u8).collect(),
+            zune_core::result::DecodingResult::U16(v) => {
+                v.iter().map(|&x| (x >> 8) as u8).collect()
+            }
             _ => panic!("Unsupported pixel format"),
         };
         (w, h, raw)
-    } else if path.extension().map_or(false, |e| e == "jpg" || e == "jpeg") {
+    } else if path
+        .extension()
+        .map_or(false, |e| e == "jpg" || e == "jpeg")
+    {
         let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
         let mut decoder = zune_image::codecs::jpeg::JpegDecoder::new_with_options(&data, opts);
         let raw = decoder.decode().expect("Failed to decode JPEG");

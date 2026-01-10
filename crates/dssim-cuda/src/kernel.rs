@@ -47,9 +47,7 @@ impl Kernel {
                 .function_by_name("compute_ssim_precomputed_ref")
                 .unwrap(),
             compute_ssim_lab: module.function_by_name("compute_ssim_lab").unwrap(),
-            compute_abs_diff_scalar: module
-                .function_by_name("compute_abs_diff_scalar")
-                .unwrap(),
+            compute_abs_diff_scalar: module.function_by_name("compute_abs_diff_scalar").unwrap(),
             _module: module,
         }
     }

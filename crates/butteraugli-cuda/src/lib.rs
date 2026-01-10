@@ -56,41 +56,41 @@ impl std::error::Error for Error {}
 /// Butteraugli algorithm constants
 mod consts {
     // Blur sigmas for different stages
-    pub const SIGMA_OPSIN: f32 = 1.2;           // Opsin dynamics blur (local adaptation)
-    pub const SIGMA_LF: f32 = 7.15593339443;    // LF separation
+    pub const SIGMA_OPSIN: f32 = 1.2; // Opsin dynamics blur (local adaptation)
+    pub const SIGMA_LF: f32 = 7.15593339443; // LF separation
 
     // Pre-computed normalized weights for sigma=1.2 mirrored blur (5x5 kernel)
     // Computed using: scaler = -1/(2*sigma²), weight_i = exp(scaler*i²), normalized
     // sigma=1.2, scaler=-0.3472222, diff=2
     // kernel=[0.24935222, 0.7066483, 1.0, 0.7066483, 0.24935222], sum=2.9120011
-    pub const OPSIN_BLUR_W0: f32 = 0.3434064686298370;   // center weight
-    pub const OPSIN_BLUR_W1: f32 = 0.2426676005125046;   // ±1 offset weight
-    pub const OPSIN_BLUR_W2: f32 = 0.0856291651725769;   // ±2 offset weight
-    pub const SIGMA_MF: f32 = 3.22489901262;    // MF separation
-    pub const SIGMA_HF: f32 = 1.56416327805;    // HF separation
-    pub const SIGMA_UHF: f32 = 1.2;             // UHF blur
-    pub const SIGMA_MASK: f32 = 2.7;            // Mask blur
+    pub const OPSIN_BLUR_W0: f32 = 0.3434064686298370; // center weight
+    pub const OPSIN_BLUR_W1: f32 = 0.2426676005125046; // ±1 offset weight
+    pub const OPSIN_BLUR_W2: f32 = 0.0856291651725769; // ±2 offset weight
+    pub const SIGMA_MF: f32 = 3.22489901262; // MF separation
+    pub const SIGMA_HF: f32 = 1.56416327805; // HF separation
+    pub const SIGMA_UHF: f32 = 1.2; // UHF blur
+    pub const SIGMA_MASK: f32 = 2.7; // Mask blur
 
     // Range processing constants (from CPU butteraugli consts)
-    pub const REMOVE_MF_RANGE: f32 = 0.29;      // Remove range for MF X channel
-    pub const ADD_MF_RANGE: f32 = 0.1;          // Amplify range for MF Y channel
-    pub const REMOVE_HF_RANGE: f32 = 1.5;       // Remove range for HF X channel
-    pub const REMOVE_UHF_RANGE: f32 = 0.04;     // Remove range for UHF X channel
+    pub const REMOVE_MF_RANGE: f32 = 0.29; // Remove range for MF X channel
+    pub const ADD_MF_RANGE: f32 = 0.1; // Amplify range for MF Y channel
+    pub const REMOVE_HF_RANGE: f32 = 1.5; // Remove range for HF X channel
+    pub const REMOVE_UHF_RANGE: f32 = 0.04; // Remove range for UHF X channel
 
     // Cross-channel suppression
-    pub const SUPPRESS_XY: f32 = 46.0;          // suppress_x_by_y weight
+    pub const SUPPRESS_XY: f32 = 46.0; // suppress_x_by_y weight
 
     // Malta filter weights for UHF band (Y channel)
     // w_0gt1 = W * hf_asymmetry, w_0lt1 = W / hf_asymmetry
     pub const W_UHF_MALTA: f32 = 1.10039032555;
-    pub const W_UHF_MALTA_0GT1: f32 = W_UHF_MALTA * HF_ASYMMETRY;  // = 0.88
-    pub const W_UHF_MALTA_0LT1: f32 = W_UHF_MALTA / HF_ASYMMETRY;  // = 1.375
+    pub const W_UHF_MALTA_0GT1: f32 = W_UHF_MALTA * HF_ASYMMETRY; // = 0.88
+    pub const W_UHF_MALTA_0LT1: f32 = W_UHF_MALTA / HF_ASYMMETRY; // = 1.375
     pub const NORM1_UHF: f32 = 71.7800275169;
 
     // Malta filter weights for UHF X channel
     pub const W_UHF_MALTA_X: f32 = 173.5;
-    pub const W_UHF_MALTA_X_0GT1: f32 = W_UHF_MALTA_X * HF_ASYMMETRY;  // = 138.8
-    pub const W_UHF_MALTA_X_0LT1: f32 = W_UHF_MALTA_X / HF_ASYMMETRY;  // = 216.875
+    pub const W_UHF_MALTA_X_0GT1: f32 = W_UHF_MALTA_X * HF_ASYMMETRY; // = 138.8
+    pub const W_UHF_MALTA_X_0LT1: f32 = W_UHF_MALTA_X / HF_ASYMMETRY; // = 216.875
     pub const NORM1_UHF_X: f32 = 5.0;
 
     // Malta filter weights for HF band (Y channel)
@@ -121,15 +121,15 @@ mod consts {
 
     // L2 difference weights [DC_X, DC_Y, DC_B, MF_X, MF_Y, MF_B, LF_X, LF_Y, LF_B]
     pub const WMUL: [f32; 9] = [
-        400.0,           // DC X
-        1.50815703118,   // DC Y
-        0.0,             // DC B (unused)
-        2150.0,          // MF X
-        10.6195433239,   // MF Y
-        16.2176043152,   // MF B
-        29.2353797994,   // LF X
-        0.844626970982,  // LF Y
-        0.703646627719,  // LF B
+        400.0,          // DC X
+        1.50815703118,  // DC Y
+        0.0,            // DC B (unused)
+        2150.0,         // MF X
+        10.6195433239,  // MF Y
+        16.2176043152,  // MF B
+        29.2353797994,  // LF X
+        0.844626970982, // LF Y
+        0.703646627719, // LF B
     ];
 
     // Intensity target for opsin dynamics (nits for 1.0 input)
@@ -275,8 +275,8 @@ impl Butteraugli {
         // We need to sum the diffmap^q, so allocate scratch for NPP Sum
         let sum_scratch = ScratchBuffer::alloc_len(size * 4 + 1024, stream.inner() as _)
             .map_err(|e| Error::Npp(format!("{:?}", e)))?;
-        let sum_result = CuBox::<[f64]>::new_zeroed(1, &stream)
-            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+        let sum_result =
+            CuBox::<[f64]>::new_zeroed(1, &stream).map_err(|e| Error::Cuda(format!("{:?}", e)))?;
 
         Ok(Self {
             kernel,
@@ -357,8 +357,10 @@ impl Butteraugli {
         // sRGB -> linear RGB -> XYB with opsin dynamics
 
         // Convert sRGB to linear RGB
-        self.kernel.srgb_to_linear(&self.stream, reference, self.linear1.full_view_mut());
-        self.kernel.srgb_to_linear(&self.stream, distorted, self.linear2.full_view_mut());
+        self.kernel
+            .srgb_to_linear(&self.stream, reference, self.linear1.full_view_mut());
+        self.kernel
+            .srgb_to_linear(&self.stream, distorted, self.linear2.full_view_mut());
 
         // Deinterleave linear RGB to planar format (stored in xyb buffers temporarily)
         // We do this BEFORE opsin dynamics so we can downsample for multi-scale
@@ -384,15 +386,19 @@ impl Butteraugli {
                 &self.stream,
                 Self::ptr(&self.xyb1[ch]),
                 Self::ptr_mut(&mut self.linear_planar1[ch]),
-                self.width, self.height,
-                self.half_width, self.half_height,
+                self.width,
+                self.height,
+                self.half_width,
+                self.half_height,
             );
             self.kernel.downsample_2x(
                 &self.stream,
                 Self::ptr(&self.xyb2[ch]),
                 Self::ptr_mut(&mut self.linear_planar2[ch]),
-                self.width, self.height,
-                self.half_width, self.half_height,
+                self.width,
+                self.height,
+                self.half_width,
+                self.half_height,
             );
         }
 
@@ -442,10 +448,11 @@ impl Butteraugli {
         for ch in 0..3 {
             self.kernel.blur_mirrored_5x5(
                 &self.stream,
-                Self::ptr(&self.xyb1[ch]),           // source: planar linear RGB
+                Self::ptr(&self.xyb1[ch]), // source: planar linear RGB
                 Self::ptr_mut(&mut self.linear_blur1[ch]), // dest: blurred for adaptation
-                Self::ptr_mut(&mut self.temp1),      // scratch buffer
-                w, h,
+                Self::ptr_mut(&mut self.temp1), // scratch buffer
+                w,
+                h,
                 consts::OPSIN_BLUR_W0,
                 consts::OPSIN_BLUR_W1,
                 consts::OPSIN_BLUR_W2,
@@ -456,13 +463,14 @@ impl Butteraugli {
         // This transforms xyb1 from linear RGB to XYB in place
         self.kernel.opsin_dynamics(
             &self.stream,
-            Self::ptr_mut(&mut self.xyb1[0]),  // R -> X (modified in place)
-            Self::ptr_mut(&mut self.xyb1[1]),  // G -> Y (modified in place)
-            Self::ptr_mut(&mut self.xyb1[2]),  // B -> B (modified in place)
-            Self::ptr(&self.linear_blur1[0]),  // blurred R for adaptation
-            Self::ptr(&self.linear_blur1[1]),  // blurred G for adaptation
-            Self::ptr(&self.linear_blur1[2]),  // blurred B for adaptation
-            w, h,
+            Self::ptr_mut(&mut self.xyb1[0]), // R -> X (modified in place)
+            Self::ptr_mut(&mut self.xyb1[1]), // G -> Y (modified in place)
+            Self::ptr_mut(&mut self.xyb1[2]), // B -> B (modified in place)
+            Self::ptr(&self.linear_blur1[0]), // blurred R for adaptation
+            Self::ptr(&self.linear_blur1[1]), // blurred G for adaptation
+            Self::ptr(&self.linear_blur1[2]), // blurred B for adaptation
+            w,
+            h,
             consts::INTENSITY_TARGET,
         );
 
@@ -474,7 +482,8 @@ impl Butteraugli {
                 Self::ptr(&self.xyb2[ch]),
                 Self::ptr_mut(&mut self.linear_blur2[ch]),
                 Self::ptr_mut(&mut self.temp1),
-                w, h,
+                w,
+                h,
                 consts::OPSIN_BLUR_W0,
                 consts::OPSIN_BLUR_W1,
                 consts::OPSIN_BLUR_W2,
@@ -489,7 +498,8 @@ impl Butteraugli {
             Self::ptr(&self.linear_blur2[0]),
             Self::ptr(&self.linear_blur2[1]),
             Self::ptr(&self.linear_blur2[2]),
-            w, h,
+            w,
+            h,
             consts::INTENSITY_TARGET,
         );
 
@@ -530,7 +540,8 @@ impl Butteraugli {
 
                 // LF = blur(src, SIGMA_LF) → store in freq[3]
                 let lf = Self::ptr_mut(&mut freq[3][ch]);
-                self.kernel.blur(&self.stream, src, lf, temp1, w, h, consts::SIGMA_LF);
+                self.kernel
+                    .blur(&self.stream, src, lf, temp1, w, h, consts::SIGMA_LF);
 
                 // MF_raw = src - LF → store in freq[2] temporarily
                 let mf = Self::ptr_mut(&mut freq[2][ch]);
@@ -548,13 +559,15 @@ impl Butteraugli {
                 let mf_raw = Self::ptr(&freq[2][ch]);
 
                 // Blur MF_raw with sigma=3.225 → store in temp1
-                self.kernel.blur(&self.stream, mf_raw, temp1, temp2, w, h, consts::SIGMA_MF);
+                self.kernel
+                    .blur(&self.stream, mf_raw, temp1, temp2, w, h, consts::SIGMA_MF);
 
                 if ch < 2 {
                     // For X and Y channels: HF = MF_raw - blur(MF_raw)
                     // Store HF_raw in freq[1][ch]
                     let hf = Self::ptr_mut(&mut freq[1][ch]);
-                    self.kernel.subtract_arrays(&self.stream, mf_raw, temp1, hf, size);
+                    self.kernel
+                        .subtract_arrays(&self.stream, mf_raw, temp1, hf, size);
                 }
 
                 // Copy blurred MF back to freq[2][ch] (MF = blur(MF_raw))
@@ -564,21 +577,33 @@ impl Butteraugli {
                         self.temp1.ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
             }
 
             // Post-process MF bands (matches CPU separate_mf_and_hf)
             // MF[X] = remove_range_around_zero(MF[X], REMOVE_MF_RANGE)
             // MF[Y] = amplify_range_around_zero(MF[Y], ADD_MF_RANGE)
-            self.kernel.remove_range(&self.stream, Self::ptr_mut(&mut freq[2][0]), size, consts::REMOVE_MF_RANGE);
-            self.kernel.amplify_range(&self.stream, Self::ptr_mut(&mut freq[2][1]), size, consts::ADD_MF_RANGE);
+            self.kernel.remove_range(
+                &self.stream,
+                Self::ptr_mut(&mut freq[2][0]),
+                size,
+                consts::REMOVE_MF_RANGE,
+            );
+            self.kernel.amplify_range(
+                &self.stream,
+                Self::ptr_mut(&mut freq[2][1]),
+                size,
+                consts::ADD_MF_RANGE,
+            );
 
             // Apply suppress_x_by_y to HF[X] using HF[Y]
             self.kernel.suppress_x_by_y(
                 &self.stream,
-                Self::ptr_mut(&mut freq[1][0]),  // HF X (modified)
-                Self::ptr(&freq[1][1]),           // HF Y (read only)
+                Self::ptr_mut(&mut freq[1][0]), // HF X (modified)
+                Self::ptr(&freq[1][1]),         // HF Y (read only)
                 size,
                 consts::SUPPRESS_XY,
             );
@@ -591,11 +616,13 @@ impl Butteraugli {
                 let hf_raw = Self::ptr(&freq[1][0]);
 
                 // Blur HF_raw with sigma=1.564 → store in temp1
-                self.kernel.blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
+                self.kernel
+                    .blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
 
                 // UHF = HF_raw - blur(HF_raw)
                 let uhf = Self::ptr_mut(&mut freq[0][0]);
-                self.kernel.subtract_arrays(&self.stream, hf_raw, temp1, uhf, size);
+                self.kernel
+                    .subtract_arrays(&self.stream, hf_raw, temp1, uhf, size);
 
                 // HF = blur(HF_raw)
                 unsafe {
@@ -604,12 +631,24 @@ impl Butteraugli {
                         self.temp1.ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
 
                 // Post-process X channel
-                self.kernel.remove_range(&self.stream, Self::ptr_mut(&mut freq[1][0]), size, consts::REMOVE_HF_RANGE);
-                self.kernel.remove_range(&self.stream, Self::ptr_mut(&mut freq[0][0]), size, consts::REMOVE_UHF_RANGE);
+                self.kernel.remove_range(
+                    &self.stream,
+                    Self::ptr_mut(&mut freq[1][0]),
+                    size,
+                    consts::REMOVE_HF_RANGE,
+                );
+                self.kernel.remove_range(
+                    &self.stream,
+                    Self::ptr_mut(&mut freq[0][0]),
+                    size,
+                    consts::REMOVE_UHF_RANGE,
+                );
             }
 
             // For Y channel: use separate_hf_uhf_kernel which does maximum_clamp, scaling, and amplify
@@ -620,33 +659,38 @@ impl Butteraugli {
                 // Copy HF_raw (current HF) to UHF before blurring
                 unsafe {
                     cudarse_driver::sys::cuMemcpyAsync(
-                        freq[0][1].ptr(),  // UHF = HF_raw
+                        freq[0][1].ptr(), // UHF = HF_raw
                         freq[1][1].ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
 
                 // Blur HF_raw with sigma=1.564 → store in HF
-                let hf_raw = Self::ptr(&freq[0][1]);  // UHF now holds HF_raw
-                self.kernel.blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
+                let hf_raw = Self::ptr(&freq[0][1]); // UHF now holds HF_raw
+                self.kernel
+                    .blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
 
                 // Copy blur result to HF
                 unsafe {
                     cudarse_driver::sys::cuMemcpyAsync(
-                        freq[1][1].ptr(),  // HF = blur(HF_raw)
+                        freq[1][1].ptr(), // HF = blur(HF_raw)
                         self.temp1.ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
 
                 // Apply Y channel post-processing using separate_hf_uhf_kernel
                 // This does: HF = amplify(max_clamp(HF) * HF_MUL), UHF = max_clamp(UHF - max_clamp(HF)) * UHF_MUL
                 self.kernel.separate_hf_uhf(
                     &self.stream,
-                    Self::ptr_mut(&mut freq[1][1]),  // HF Y
-                    Self::ptr_mut(&mut freq[0][1]),  // UHF Y (currently holds HF_raw)
+                    Self::ptr_mut(&mut freq[1][1]), // HF Y
+                    Self::ptr_mut(&mut freq[0][1]), // UHF Y (currently holds HF_raw)
                     size,
                 );
             }
@@ -673,8 +717,16 @@ impl Butteraugli {
 
         // Clear accumulators
         for i in 0..3 {
-            self.kernel.clear_buffer(&self.stream, Self::ptr_mut(&mut self.block_diff_dc[i]), size);
-            self.kernel.clear_buffer(&self.stream, Self::ptr_mut(&mut self.block_diff_ac[i]), size);
+            self.kernel.clear_buffer(
+                &self.stream,
+                Self::ptr_mut(&mut self.block_diff_dc[i]),
+                size,
+            );
+            self.kernel.clear_buffer(
+                &self.stream,
+                Self::ptr_mut(&mut self.block_diff_ac[i]),
+                size,
+            );
         }
 
         // === UHF differences (Malta HF kernel) ===
@@ -684,7 +736,8 @@ impl Butteraugli {
             Self::ptr(&self.freq1[0][1]), // UHF Y image 1
             Self::ptr(&self.freq2[0][1]), // UHF Y image 2
             Self::ptr_mut(&mut self.block_diff_ac[1]),
-            w, h,
+            w,
+            h,
             consts::W_UHF_MALTA_0GT1,
             consts::W_UHF_MALTA_0LT1,
             consts::NORM1_UHF,
@@ -696,7 +749,8 @@ impl Butteraugli {
             Self::ptr(&self.freq1[0][0]),
             Self::ptr(&self.freq2[0][0]),
             Self::ptr_mut(&mut self.block_diff_ac[0]),
-            w, h,
+            w,
+            h,
             consts::W_UHF_MALTA_X_0GT1,
             consts::W_UHF_MALTA_X_0LT1,
             consts::NORM1_UHF_X,
@@ -709,7 +763,8 @@ impl Butteraugli {
             Self::ptr(&self.freq1[1][1]),
             Self::ptr(&self.freq2[1][1]),
             Self::ptr_mut(&mut self.block_diff_ac[1]),
-            w, h,
+            w,
+            h,
             consts::W_HF_MALTA_0GT1,
             consts::W_HF_MALTA_0LT1,
             consts::NORM1_HF,
@@ -721,7 +776,8 @@ impl Butteraugli {
             Self::ptr(&self.freq1[1][0]),
             Self::ptr(&self.freq2[1][0]),
             Self::ptr_mut(&mut self.block_diff_ac[0]),
-            w, h,
+            w,
+            h,
             consts::W_HF_MALTA_X_0GT1,
             consts::W_HF_MALTA_X_0LT1,
             consts::NORM1_HF_X,
@@ -734,7 +790,8 @@ impl Butteraugli {
             Self::ptr(&self.freq1[2][1]),
             Self::ptr(&self.freq2[2][1]),
             Self::ptr_mut(&mut self.block_diff_ac[1]),
-            w, h,
+            w,
+            h,
             consts::W_MF_MALTA, // Symmetric - same for both
             consts::W_MF_MALTA,
             consts::NORM1_MF,
@@ -746,7 +803,8 @@ impl Butteraugli {
             Self::ptr(&self.freq1[2][0]),
             Self::ptr(&self.freq2[2][0]),
             Self::ptr_mut(&mut self.block_diff_ac[0]),
-            w, h,
+            w,
+            h,
             consts::W_MF_MALTA_X, // Symmetric - same for both
             consts::W_MF_MALTA_X,
             consts::NORM1_MF_X,
@@ -901,8 +959,9 @@ impl Butteraugli {
             &self.stream,
             Self::ptr(&self.temp1),
             Self::ptr_mut(&mut self.mask),
-            Self::ptr_mut(&mut self.mask_temp),  // scratch
-            w, h,
+            Self::ptr_mut(&mut self.mask_temp), // scratch
+            w,
+            h,
             consts::SIGMA_MASK,
         );
 
@@ -912,8 +971,9 @@ impl Butteraugli {
             &self.stream,
             Self::ptr(&self.temp2),
             Self::ptr_mut(&mut self.mask_temp),
-            Self::ptr_mut(&mut self.temp1),  // scratch
-            w, h,
+            Self::ptr_mut(&mut self.temp1), // scratch
+            w,
+            h,
             consts::SIGMA_MASK,
         );
 
@@ -922,7 +982,8 @@ impl Butteraugli {
             &self.stream,
             Self::ptr(&self.mask),
             Self::ptr_mut(&mut self.temp1),
-            w, h,
+            w,
+            h,
         );
 
         // Step 8: MaskToErrorMul: add (blurred0 - blurred1)² * 10 to block_diff_ac[Y]
@@ -942,7 +1003,9 @@ impl Butteraugli {
                 self.temp1.ptr(),
                 size * 4,
                 self.stream.raw(),
-            ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+            )
+            .result()
+            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
         }
 
         Ok(())
@@ -987,13 +1050,17 @@ impl Butteraugli {
                     self.linear_planar1[ch].ptr(),
                     size * 4,
                     self.stream.raw(),
-                ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                )
+                .result()
+                .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 cudarse_driver::sys::cuMemcpyAsync(
                     self.xyb2[ch].ptr(),
                     self.linear_planar2[ch].ptr(),
                     size * 4,
                     self.stream.raw(),
-                ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                )
+                .result()
+                .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
             }
         }
 
@@ -1005,7 +1072,8 @@ impl Butteraugli {
                 Self::ptr(&self.xyb1[ch]),
                 Self::ptr_mut(&mut self.linear_blur1[ch]),
                 Self::ptr_mut(&mut self.temp1),
-                w, h,
+                w,
+                h,
                 consts::OPSIN_BLUR_W0,
                 consts::OPSIN_BLUR_W1,
                 consts::OPSIN_BLUR_W2,
@@ -1019,7 +1087,8 @@ impl Butteraugli {
             Self::ptr(&self.linear_blur1[0]),
             Self::ptr(&self.linear_blur1[1]),
             Self::ptr(&self.linear_blur1[2]),
-            w, h,
+            w,
+            h,
             consts::INTENSITY_TARGET,
         );
 
@@ -1029,7 +1098,8 @@ impl Butteraugli {
                 Self::ptr(&self.xyb2[ch]),
                 Self::ptr_mut(&mut self.linear_blur2[ch]),
                 Self::ptr_mut(&mut self.temp1),
-                w, h,
+                w,
+                h,
                 consts::OPSIN_BLUR_W0,
                 consts::OPSIN_BLUR_W1,
                 consts::OPSIN_BLUR_W2,
@@ -1043,7 +1113,8 @@ impl Butteraugli {
             Self::ptr(&self.linear_blur2[0]),
             Self::ptr(&self.linear_blur2[1]),
             Self::ptr(&self.linear_blur2[2]),
-            w, h,
+            w,
+            h,
             consts::INTENSITY_TARGET,
         );
 
@@ -1062,7 +1133,8 @@ impl Butteraugli {
 
                 // LF = blur(src, SIGMA_LF)
                 let lf = Self::ptr_mut(&mut freq[3][ch]);
-                self.kernel.blur(&self.stream, src, lf, temp1, w, h, consts::SIGMA_LF);
+                self.kernel
+                    .blur(&self.stream, src, lf, temp1, w, h, consts::SIGMA_LF);
 
                 // MF_raw = src - LF
                 let mf = Self::ptr_mut(&mut freq[2][ch]);
@@ -1076,12 +1148,14 @@ impl Butteraugli {
                 let mf_raw = Self::ptr(&freq[2][ch]);
 
                 // Blur MF_raw with sigma=3.225
-                self.kernel.blur(&self.stream, mf_raw, temp1, temp2, w, h, consts::SIGMA_MF);
+                self.kernel
+                    .blur(&self.stream, mf_raw, temp1, temp2, w, h, consts::SIGMA_MF);
 
                 if ch < 2 {
                     // HF = MF_raw - blur(MF_raw)
                     let hf = Self::ptr_mut(&mut freq[1][ch]);
-                    self.kernel.subtract_arrays(&self.stream, mf_raw, temp1, hf, size);
+                    self.kernel
+                        .subtract_arrays(&self.stream, mf_raw, temp1, hf, size);
                 }
 
                 // MF = blur(MF_raw)
@@ -1091,13 +1165,25 @@ impl Butteraugli {
                         self.temp1.ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
             }
 
             // Post-process MF bands
-            self.kernel.remove_range(&self.stream, Self::ptr_mut(&mut freq[2][0]), size, consts::REMOVE_MF_RANGE);
-            self.kernel.amplify_range(&self.stream, Self::ptr_mut(&mut freq[2][1]), size, consts::ADD_MF_RANGE);
+            self.kernel.remove_range(
+                &self.stream,
+                Self::ptr_mut(&mut freq[2][0]),
+                size,
+                consts::REMOVE_MF_RANGE,
+            );
+            self.kernel.amplify_range(
+                &self.stream,
+                Self::ptr_mut(&mut freq[2][1]),
+                size,
+                consts::ADD_MF_RANGE,
+            );
 
             // Apply suppress_x_by_y to HF[X] using HF[Y]
             self.kernel.suppress_x_by_y(
@@ -1114,10 +1200,12 @@ impl Butteraugli {
                 let temp2 = Self::ptr_mut(&mut self.temp2);
                 let hf_raw = Self::ptr(&freq[1][0]);
 
-                self.kernel.blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
+                self.kernel
+                    .blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
 
                 let uhf = Self::ptr_mut(&mut freq[0][0]);
-                self.kernel.subtract_arrays(&self.stream, hf_raw, temp1, uhf, size);
+                self.kernel
+                    .subtract_arrays(&self.stream, hf_raw, temp1, uhf, size);
 
                 unsafe {
                     cudarse_driver::sys::cuMemcpyAsync(
@@ -1125,11 +1213,23 @@ impl Butteraugli {
                         self.temp1.ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
 
-                self.kernel.remove_range(&self.stream, Self::ptr_mut(&mut freq[1][0]), size, consts::REMOVE_HF_RANGE);
-                self.kernel.remove_range(&self.stream, Self::ptr_mut(&mut freq[0][0]), size, consts::REMOVE_UHF_RANGE);
+                self.kernel.remove_range(
+                    &self.stream,
+                    Self::ptr_mut(&mut freq[1][0]),
+                    size,
+                    consts::REMOVE_HF_RANGE,
+                );
+                self.kernel.remove_range(
+                    &self.stream,
+                    Self::ptr_mut(&mut freq[0][0]),
+                    size,
+                    consts::REMOVE_UHF_RANGE,
+                );
             }
 
             // Step 3c: Separate HF and UHF (Y channel with special processing)
@@ -1144,11 +1244,14 @@ impl Butteraugli {
                         freq[1][1].ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
 
                 let hf_raw = Self::ptr(&freq[0][1]);
-                self.kernel.blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
+                self.kernel
+                    .blur(&self.stream, hf_raw, temp1, temp2, w, h, consts::SIGMA_HF);
 
                 unsafe {
                     cudarse_driver::sys::cuMemcpyAsync(
@@ -1156,7 +1259,9 @@ impl Butteraugli {
                         self.temp1.ptr(),
                         size * 4,
                         self.stream.raw(),
-                    ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                    )
+                    .result()
+                    .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
                 }
 
                 self.kernel.separate_hf_uhf(
@@ -1180,8 +1285,16 @@ impl Butteraugli {
         // === Step 4: Compute differences at half resolution ===
         // Clear accumulators
         for i in 0..3 {
-            self.kernel.clear_buffer(&self.stream, Self::ptr_mut(&mut self.block_diff_dc[i]), size);
-            self.kernel.clear_buffer(&self.stream, Self::ptr_mut(&mut self.block_diff_ac[i]), size);
+            self.kernel.clear_buffer(
+                &self.stream,
+                Self::ptr_mut(&mut self.block_diff_dc[i]),
+                size,
+            );
+            self.kernel.clear_buffer(
+                &self.stream,
+                Self::ptr_mut(&mut self.block_diff_ac[i]),
+                size,
+            );
         }
 
         // UHF Malta Y
@@ -1190,8 +1303,11 @@ impl Butteraugli {
             Self::ptr(&self.freq1[0][1]),
             Self::ptr(&self.freq2[0][1]),
             Self::ptr_mut(&mut self.block_diff_ac[1]),
-            w, h,
-            consts::W_UHF_MALTA_0GT1, consts::W_UHF_MALTA_0LT1, consts::NORM1_UHF,
+            w,
+            h,
+            consts::W_UHF_MALTA_0GT1,
+            consts::W_UHF_MALTA_0LT1,
+            consts::NORM1_UHF,
         );
         // UHF Malta X
         self.kernel.malta_diff_map(
@@ -1199,8 +1315,11 @@ impl Butteraugli {
             Self::ptr(&self.freq1[0][0]),
             Self::ptr(&self.freq2[0][0]),
             Self::ptr_mut(&mut self.block_diff_ac[0]),
-            w, h,
-            consts::W_UHF_MALTA_X_0GT1, consts::W_UHF_MALTA_X_0LT1, consts::NORM1_UHF_X,
+            w,
+            h,
+            consts::W_UHF_MALTA_X_0GT1,
+            consts::W_UHF_MALTA_X_0LT1,
+            consts::NORM1_UHF_X,
         );
         // HF Malta Y (LF kernel - 5 samples)
         self.kernel.malta_diff_map_lf(
@@ -1208,8 +1327,11 @@ impl Butteraugli {
             Self::ptr(&self.freq1[1][1]),
             Self::ptr(&self.freq2[1][1]),
             Self::ptr_mut(&mut self.block_diff_ac[1]),
-            w, h,
-            consts::W_HF_MALTA_0GT1, consts::W_HF_MALTA_0LT1, consts::NORM1_HF,
+            w,
+            h,
+            consts::W_HF_MALTA_0GT1,
+            consts::W_HF_MALTA_0LT1,
+            consts::NORM1_HF,
         );
         // HF Malta X (LF kernel - 5 samples)
         self.kernel.malta_diff_map_lf(
@@ -1217,8 +1339,11 @@ impl Butteraugli {
             Self::ptr(&self.freq1[1][0]),
             Self::ptr(&self.freq2[1][0]),
             Self::ptr_mut(&mut self.block_diff_ac[0]),
-            w, h,
-            consts::W_HF_MALTA_X_0GT1, consts::W_HF_MALTA_X_0LT1, consts::NORM1_HF_X,
+            w,
+            h,
+            consts::W_HF_MALTA_X_0GT1,
+            consts::W_HF_MALTA_X_0LT1,
+            consts::NORM1_HF_X,
         );
         // MF Malta Y - symmetric weights
         self.kernel.malta_diff_map_lf(
@@ -1226,8 +1351,11 @@ impl Butteraugli {
             Self::ptr(&self.freq1[2][1]),
             Self::ptr(&self.freq2[2][1]),
             Self::ptr_mut(&mut self.block_diff_ac[1]),
-            w, h,
-            consts::W_MF_MALTA, consts::W_MF_MALTA, consts::NORM1_MF,
+            w,
+            h,
+            consts::W_MF_MALTA,
+            consts::W_MF_MALTA,
+            consts::NORM1_MF,
         );
         // MF Malta X - symmetric weights
         self.kernel.malta_diff_map_lf(
@@ -1235,8 +1363,11 @@ impl Butteraugli {
             Self::ptr(&self.freq1[2][0]),
             Self::ptr(&self.freq2[2][0]),
             Self::ptr_mut(&mut self.block_diff_ac[0]),
-            w, h,
-            consts::W_MF_MALTA_X, consts::W_MF_MALTA_X, consts::NORM1_MF_X,
+            w,
+            h,
+            consts::W_MF_MALTA_X,
+            consts::W_MF_MALTA_X,
+            consts::NORM1_MF_X,
         );
 
         // L2 differences
@@ -1260,61 +1391,138 @@ impl Butteraugli {
             consts::WMUL[1] / consts::HF_ASYMMETRY,
         );
         // MF X, Y, B
-        self.kernel.l2_diff(&self.stream, Self::ptr(&self.freq1[2][0]), Self::ptr(&self.freq2[2][0]),
-            Self::ptr_mut(&mut self.block_diff_ac[0]), size, consts::WMUL[3]);
-        self.kernel.l2_diff(&self.stream, Self::ptr(&self.freq1[2][1]), Self::ptr(&self.freq2[2][1]),
-            Self::ptr_mut(&mut self.block_diff_ac[1]), size, consts::WMUL[4]);
-        self.kernel.l2_diff(&self.stream, Self::ptr(&self.freq1[2][2]), Self::ptr(&self.freq2[2][2]),
-            Self::ptr_mut(&mut self.block_diff_ac[2]), size, consts::WMUL[5]);
+        self.kernel.l2_diff(
+            &self.stream,
+            Self::ptr(&self.freq1[2][0]),
+            Self::ptr(&self.freq2[2][0]),
+            Self::ptr_mut(&mut self.block_diff_ac[0]),
+            size,
+            consts::WMUL[3],
+        );
+        self.kernel.l2_diff(
+            &self.stream,
+            Self::ptr(&self.freq1[2][1]),
+            Self::ptr(&self.freq2[2][1]),
+            Self::ptr_mut(&mut self.block_diff_ac[1]),
+            size,
+            consts::WMUL[4],
+        );
+        self.kernel.l2_diff(
+            &self.stream,
+            Self::ptr(&self.freq1[2][2]),
+            Self::ptr(&self.freq2[2][2]),
+            Self::ptr_mut(&mut self.block_diff_ac[2]),
+            size,
+            consts::WMUL[5],
+        );
         // LF X, Y, B
-        self.kernel.l2_diff(&self.stream, Self::ptr(&self.freq1[3][0]), Self::ptr(&self.freq2[3][0]),
-            Self::ptr_mut(&mut self.block_diff_dc[0]), size, consts::WMUL[6]);
-        self.kernel.l2_diff(&self.stream, Self::ptr(&self.freq1[3][1]), Self::ptr(&self.freq2[3][1]),
-            Self::ptr_mut(&mut self.block_diff_dc[1]), size, consts::WMUL[7]);
-        self.kernel.l2_diff(&self.stream, Self::ptr(&self.freq1[3][2]), Self::ptr(&self.freq2[3][2]),
-            Self::ptr_mut(&mut self.block_diff_dc[2]), size, consts::WMUL[8]);
+        self.kernel.l2_diff(
+            &self.stream,
+            Self::ptr(&self.freq1[3][0]),
+            Self::ptr(&self.freq2[3][0]),
+            Self::ptr_mut(&mut self.block_diff_dc[0]),
+            size,
+            consts::WMUL[6],
+        );
+        self.kernel.l2_diff(
+            &self.stream,
+            Self::ptr(&self.freq1[3][1]),
+            Self::ptr(&self.freq2[3][1]),
+            Self::ptr_mut(&mut self.block_diff_dc[1]),
+            size,
+            consts::WMUL[7],
+        );
+        self.kernel.l2_diff(
+            &self.stream,
+            Self::ptr(&self.freq1[3][2]),
+            Self::ptr(&self.freq2[3][2]),
+            Self::ptr_mut(&mut self.block_diff_dc[2]),
+            size,
+            consts::WMUL[8],
+        );
 
         // === Step 5: Masking at half resolution ===
         // Same pipeline as compute_masking but at half resolution
         // Step 1: CombineChannelsForMasking for image 1 → mask
         self.kernel.combine_channels_for_masking(
             &self.stream,
-            Self::ptr(&self.freq1[1][0]), Self::ptr(&self.freq1[0][0]),
-            Self::ptr(&self.freq1[1][1]), Self::ptr(&self.freq1[0][1]),
+            Self::ptr(&self.freq1[1][0]),
+            Self::ptr(&self.freq1[0][0]),
+            Self::ptr(&self.freq1[1][1]),
+            Self::ptr(&self.freq1[0][1]),
             Self::ptr_mut(&mut self.mask),
             size,
         );
         // Step 2: CombineChannelsForMasking for image 2 → mask_temp
         self.kernel.combine_channels_for_masking(
             &self.stream,
-            Self::ptr(&self.freq2[1][0]), Self::ptr(&self.freq2[0][0]),
-            Self::ptr(&self.freq2[1][1]), Self::ptr(&self.freq2[0][1]),
+            Self::ptr(&self.freq2[1][0]),
+            Self::ptr(&self.freq2[0][0]),
+            Self::ptr(&self.freq2[1][1]),
+            Self::ptr(&self.freq2[0][1]),
             Self::ptr_mut(&mut self.mask_temp),
             size,
         );
         // Step 3: DiffPrecompute on mask0 → temp1
-        self.kernel.diff_precompute(&self.stream, Self::ptr(&self.mask),
-            Self::ptr_mut(&mut self.temp1), size);
+        self.kernel.diff_precompute(
+            &self.stream,
+            Self::ptr(&self.mask),
+            Self::ptr_mut(&mut self.temp1),
+            size,
+        );
         // Step 4: DiffPrecompute on mask1 → temp2
-        self.kernel.diff_precompute(&self.stream, Self::ptr(&self.mask_temp),
-            Self::ptr_mut(&mut self.temp2), size);
+        self.kernel.diff_precompute(
+            &self.stream,
+            Self::ptr(&self.mask_temp),
+            Self::ptr_mut(&mut self.temp2),
+            size,
+        );
         // Step 5: Blur diff0 → mask (blurred0)
-        self.kernel.blur(&self.stream, Self::ptr(&self.temp1), Self::ptr_mut(&mut self.mask),
-            Self::ptr_mut(&mut self.mask_temp), w, h, consts::SIGMA_MASK);
+        self.kernel.blur(
+            &self.stream,
+            Self::ptr(&self.temp1),
+            Self::ptr_mut(&mut self.mask),
+            Self::ptr_mut(&mut self.mask_temp),
+            w,
+            h,
+            consts::SIGMA_MASK,
+        );
         // Step 6: Blur diff1 → mask_temp (blurred1)
-        self.kernel.blur(&self.stream, Self::ptr(&self.temp2), Self::ptr_mut(&mut self.mask_temp),
-            Self::ptr_mut(&mut self.temp1), w, h, consts::SIGMA_MASK);
+        self.kernel.blur(
+            &self.stream,
+            Self::ptr(&self.temp2),
+            Self::ptr_mut(&mut self.mask_temp),
+            Self::ptr_mut(&mut self.temp1),
+            w,
+            h,
+            consts::SIGMA_MASK,
+        );
         // Step 7: FuzzyErosion on blurred0 → temp1 (final mask)
-        self.kernel.fuzzy_erosion(&self.stream, Self::ptr(&self.mask),
-            Self::ptr_mut(&mut self.temp1), w, h);
+        self.kernel.fuzzy_erosion(
+            &self.stream,
+            Self::ptr(&self.mask),
+            Self::ptr_mut(&mut self.temp1),
+            w,
+            h,
+        );
         // Step 8: MaskToErrorMul using blurred0 - blurred1
-        self.kernel.mask_to_error_mul(&self.stream, Self::ptr(&self.mask), Self::ptr(&self.mask_temp),
-            Self::ptr_mut(&mut self.block_diff_ac[1]), size);
+        self.kernel.mask_to_error_mul(
+            &self.stream,
+            Self::ptr(&self.mask),
+            Self::ptr(&self.mask_temp),
+            Self::ptr_mut(&mut self.block_diff_ac[1]),
+            size,
+        );
         // Copy final mask (temp1) back to mask
         unsafe {
             cudarse_driver::sys::cuMemcpyAsync(
-                self.mask.ptr(), self.temp1.ptr(), size * 4, self.stream.raw(),
-            ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                self.mask.ptr(),
+                self.temp1.ptr(),
+                size * 4,
+                self.stream.raw(),
+            )
+            .result()
+            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
         }
 
         // === Step 6: Combine into half-res diffmap ===
@@ -1336,8 +1544,10 @@ impl Butteraugli {
             &self.stream,
             Self::ptr(&self.diffmap_half),
             Self::ptr_mut(&mut self.diffmap),
-            self.half_width, self.half_height,
-            self.width, self.height,
+            self.half_width,
+            self.half_height,
+            self.width,
+            self.height,
             0.5, // Weight for half-res contribution
         );
 
@@ -1372,8 +1582,10 @@ impl Butteraugli {
         }
 
         // === Stage 1: Color Space Conversion ===
-        self.kernel.srgb_to_linear(&self.stream, reference, self.linear1.full_view_mut());
-        self.kernel.srgb_to_linear(&self.stream, distorted, self.linear2.full_view_mut());
+        self.kernel
+            .srgb_to_linear(&self.stream, reference, self.linear1.full_view_mut());
+        self.kernel
+            .srgb_to_linear(&self.stream, distorted, self.linear2.full_view_mut());
 
         self.kernel.deinterleave_3ch(
             &self.stream,
@@ -1396,15 +1608,19 @@ impl Butteraugli {
                 &self.stream,
                 Self::ptr(&self.xyb1[ch]),
                 Self::ptr_mut(&mut self.linear_planar1[ch]),
-                self.width, self.height,
-                self.half_width, self.half_height,
+                self.width,
+                self.height,
+                self.half_width,
+                self.half_height,
             );
             self.kernel.downsample_2x(
                 &self.stream,
                 Self::ptr(&self.xyb2[ch]),
                 Self::ptr_mut(&mut self.linear_planar2[ch]),
-                self.width, self.height,
-                self.half_width, self.half_height,
+                self.width,
+                self.height,
+                self.half_width,
+                self.half_height,
             );
         }
 
@@ -1425,7 +1641,10 @@ impl Butteraugli {
 
         // === Stage 6: Multi-scale Processing (optional) ===
         const MIN_SIZE_FOR_MULTISCALE: usize = 15;
-        if enable_multiscale && self.width >= MIN_SIZE_FOR_MULTISCALE && self.height >= MIN_SIZE_FOR_MULTISCALE {
+        if enable_multiscale
+            && self.width >= MIN_SIZE_FOR_MULTISCALE
+            && self.height >= MIN_SIZE_FOR_MULTISCALE
+        {
             self.run_half_scale_and_combine()?;
         }
 
@@ -1443,7 +1662,9 @@ impl Butteraugli {
         let size = self.size;
 
         // Sync and copy diffmap to CPU
-        self.stream.sync().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+        self.stream
+            .sync()
+            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
 
         let mut cpu_buf = vec![0.0f32; size];
         unsafe {
@@ -1451,7 +1672,9 @@ impl Butteraugli {
                 cpu_buf.as_mut_ptr() as *mut _,
                 self.diffmap.ptr(),
                 size * 4,
-            ).result().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+            )
+            .result()
+            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
         }
 
         // Find maximum on CPU
@@ -1478,7 +1701,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.diffmap.ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }
@@ -1492,7 +1717,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.block_diff_ac[channel].ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }
@@ -1506,7 +1733,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.block_diff_dc[channel].ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }
@@ -1520,7 +1749,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.mask.ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }
@@ -1534,7 +1765,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.freq1[band][channel].ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }
@@ -1548,7 +1781,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.freq2[band][channel].ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }
@@ -1562,7 +1797,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.xyb1[channel].ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }
@@ -1576,7 +1813,9 @@ impl Butteraugli {
                 buf.as_mut_ptr() as *mut _,
                 self.xyb2[channel].ptr(),
                 self.size * 4,
-            ).result().expect("memcpy failed");
+            )
+            .result()
+            .expect("memcpy failed");
         }
         buf
     }

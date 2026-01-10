@@ -1,3 +1,9 @@
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::len_without_is_empty,
+    clippy::missing_transmute_annotations
+)]
+
 use std::ptr::{null_mut, NonNull};
 
 pub use cudarse_driver_sys as sys;

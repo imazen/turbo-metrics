@@ -1,3 +1,9 @@
+#![allow(
+    clippy::missing_safety_doc,
+    clippy::len_without_is_empty,
+    clippy::extra_unused_lifetimes
+)]
+
 use std::any::TypeId;
 use std::borrow::{Borrow, BorrowMut};
 use std::error::Error;
@@ -238,7 +244,7 @@ impl<S: Sample> OwnedSampleStorage for Box<[S]> {
     }
 }
 
-impl<'a, S: Sample> SampleStorage for &'a [S] {
+impl<S: Sample> SampleStorage for &[S] {
     type SampleType = S;
 }
 impl<'a, S: Sample, Target: Sample + 'a> CastStorage<Target> for &'a [S] {

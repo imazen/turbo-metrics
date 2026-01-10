@@ -1,6 +1,5 @@
 use crate::plane::Plane;
 use crate::{OwnedSampleStorage, Sample, SampleStorage, StaticSample};
-use std::borrow::Borrow;
 use std::error::Error;
 use std::ops::{Index, IndexMut};
 
@@ -271,11 +270,11 @@ impl<P: PlaneStorage, Stor: SampleStorage, M> Image<Stor, P, M> {
     }
 }
 
-impl<P: PlaneStorage, Stor: SampleStorage, M> Into<(P::Storage<Plane<Stor>>, M)>
-    for Image<Stor, P, M>
+impl<P: PlaneStorage, Stor: SampleStorage, M> From<Image<Stor, P, M>>
+    for (P::Storage<Plane<Stor>>, M)
 {
-    fn into(self) -> (P::Storage<Plane<Stor>>, M) {
-        (self.planes, self.metadata)
+    fn from(val: Image<Stor, P, M>) -> Self {
+        (val.planes, val.metadata)
     }
 }
 

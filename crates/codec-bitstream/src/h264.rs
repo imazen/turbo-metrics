@@ -8,7 +8,6 @@
 
 use std::collections::VecDeque;
 use std::io::{Cursor, ErrorKind, Read};
-use std::iter::repeat;
 use std::{io, mem};
 
 use bitstream_io::{BigEndian, BitRead, BitReader};
@@ -181,7 +180,7 @@ pub fn avcc_extradata_to_annexb(codec_private: &[u8]) -> (usize, Vec<u8>) {
         let len = reader.read::<u16>(16).unwrap() as usize;
         nalus.extend_from_slice(&NALU_DELIMITER);
         let start = nalus.len();
-        nalus.extend(repeat(0).take(len));
+        nalus.extend(std::iter::repeat_n(0, len));
         reader.read_bytes(&mut nalus[start..]).unwrap();
     }
     let num_pps: u8 = reader.read(8).unwrap();
@@ -189,7 +188,7 @@ pub fn avcc_extradata_to_annexb(codec_private: &[u8]) -> (usize, Vec<u8>) {
         let len = reader.read::<u16>(16).unwrap() as usize;
         nalus.extend_from_slice(&NALU_DELIMITER);
         let start = nalus.len();
-        nalus.extend(repeat(0).take(len));
+        nalus.extend(std::iter::repeat_n(0, len));
         reader.read_bytes(&mut nalus[start..]).unwrap();
     }
 
