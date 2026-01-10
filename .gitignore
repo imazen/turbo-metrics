@@ -6,3 +6,5 @@
 *.ncu-rep
 /data
 /frames
+*.deb
+*.o
