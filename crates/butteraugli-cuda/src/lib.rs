@@ -195,8 +195,10 @@ pub struct Butteraugli {
     half_size: usize,
     diffmap_half: CuBox<[f32]>,
 
-    // Reduction scratch buffer
+    // Reduction scratch buffer (kept allocated for future use)
+    #[allow(dead_code)]
     sum_scratch: ScratchBuffer,
+    #[allow(dead_code)]
     sum_result: CuBox<[f64]>,
 }
 

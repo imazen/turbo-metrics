@@ -1,4 +1,5 @@
 use crate::color::{convert_frame_to_linearrgb, ColorRange};
+pub use butteraugli_cuda;
 use codec_bitstream::{Codec, ColorCharacteristics};
 use cuda_colorspace::ColorspaceConversion;
 pub use cudarse_driver;
@@ -11,11 +12,10 @@ use cudarse_npp::{get_stream_ctx, set_stream, ScratchBuffer};
 pub use cudarse_video;
 use cudarse_video::dec::npp::NvDecFrame;
 use cudarse_video::sys::cudaVideoCodec;
+pub use dssim_cuda;
 pub use quick_stats;
 use quick_stats::full::Stats;
 pub use ssimulacra2_cuda;
-pub use butteraugli_cuda;
-pub use dssim_cuda;
 use ssimulacra2_cuda::Ssimulacra2;
 use std::error::Error;
 use std::fmt::{Display, Formatter};

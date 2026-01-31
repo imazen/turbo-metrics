@@ -258,7 +258,7 @@ impl<S: Sample, C: Channels> Image<S, C> {
         }
     }
 
-    pub fn full_view(&self) -> ImgView<S, C> {
+    pub fn full_view(&self) -> ImgView<'_, S, C> {
         ImgView {
             parent: self,
             width: self.width,
@@ -266,7 +266,7 @@ impl<S: Sample, C: Channels> Image<S, C> {
         }
     }
 
-    pub fn view(&self, rect: NppiRect) -> ImgView<S, C> {
+    pub fn view(&self, rect: NppiRect) -> ImgView<'_, S, C> {
         assert!(rect.width as u32 <= self.width() && rect.height as u32 <= self.height());
         ImgView {
             parent: self,
@@ -275,7 +275,7 @@ impl<S: Sample, C: Channels> Image<S, C> {
         }
     }
 
-    pub fn full_view_mut(&mut self) -> ImgViewMut<S, C> {
+    pub fn full_view_mut(&mut self) -> ImgViewMut<'_, S, C> {
         let (width, height) = (self.width, self.height);
         ImgViewMut {
             parent: self,
@@ -284,7 +284,7 @@ impl<S: Sample, C: Channels> Image<S, C> {
         }
     }
 
-    pub fn view_mut(&mut self, rect: NppiRect) -> ImgViewMut<S, C> {
+    pub fn view_mut(&mut self, rect: NppiRect) -> ImgViewMut<'_, S, C> {
         assert!(rect.width as u32 <= self.width() && rect.height as u32 <= self.height());
         ImgViewMut {
             parent: self,
