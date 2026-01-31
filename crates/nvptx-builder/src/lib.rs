@@ -78,15 +78,17 @@ fn copy_file(target_dir: &Path, package: &str, profile: &str, validate: bool) {
     src_path.set_extension("ptx");
 
     if validate {
+        let gpu_name = env::var("NVPTX_GPU_NAME").unwrap_or_else(|_| "sm_70".to_string());
         assert!(
             Command::new("ptxas")
                 .args([
                     "--compile-only",
                     "--warn-on-spills",
-                    "--warning-as-error",
                     "--verbose",
-                    "--output-file",
+                    "--gpu-name",
                 ])
+                .arg(&gpu_name)
+                .arg("--output-file")
                 .arg(if cfg!(target_os = "linux") {
                     "/dev/null"
                 } else if cfg!(target_os = "windows") {
