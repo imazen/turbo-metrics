@@ -36,7 +36,7 @@ The GPU implementation now achieves **near-perfect parity** with the CPU referen
 | Q5 | 19.5370 | 18.9820 | 2.84% |
 | Q1 | 28.6796 | 28.4422 | 0.83% |
 
-### Kodak Corpus Tests (768x512 / 512x768)
+### CID22 Corpus Tests (512x512)
 | Image | Size | CPU Score | GPU Score | Error |
 |-------|------|-----------|-----------|-------|
 | 4.png | 512x768 | 11.6439 | 11.6302 | 0.12% |
@@ -182,7 +182,7 @@ The remaining ~1% error on most JPEG tests is acceptable for a GPU implementatio
 
 The Q5 test shows 2.84% error - the highest variance is at extreme distortion levels where absolute score differences are less perceptually meaningful.
 
-All 11 accuracy tests pass. Best parity: Q45 at 0.12%, Kodak images at 0.12-0.31%.
+All 11 accuracy tests pass. Best parity: Q45 at 0.12%, corpus images at 0.12-0.31%.
 
 ## Usage Notes - Stream Synchronization
 

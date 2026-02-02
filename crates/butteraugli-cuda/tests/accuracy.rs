@@ -548,40 +548,33 @@ fn test_jpeg_quality_summary() {
 /// on certain images.
 #[test]
 fn test_context_reuse_multiple_images() {
-    const KODAK_PATH: &str = "/home/lilith/work/codec-corpus/kodak";
+    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/training";
 
-    // Skip if Kodak corpus not available
-    let kodak_dir = Path::new(KODAK_PATH);
-    if !kodak_dir.exists() {
-        eprintln!("Skipping test: Kodak corpus not found at {}", KODAK_PATH);
+    // Skip if corpus not available
+    let corpus_dir = Path::new(CORPUS_PATH);
+    if !corpus_dir.exists() {
+        eprintln!("Skipping test: CID22 corpus not found at {}", CORPUS_PATH);
         return;
     }
 
     let ctx = CudaContext::new();
 
-    // Load Kodak images - Kodak corpus alternates between 768x512 and 512x768
-    // We'll filter to only use landscape (768x512) images to avoid dimension mismatches
-    let all_images: Vec<_> = (1..=24)
-        .filter_map(|i| {
-            let name = format!("{}.png", i);
-            let path = kodak_dir.join(&name);
-            if path.exists() {
-                let img = load_image(&path);
-                // Only keep landscape images (768x512)
-                if img.0 == 768 && img.1 == 512 {
-                    Some((name, img))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+    // Load CID22 images (all 512x512)
+    let all_images: Vec<_> = std::fs::read_dir(corpus_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map_or(false, |e| e == "png"))
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().to_string();
+            let img = load_image(&path);
+            Some((name, img))
         })
-        .take(4) // Take first 4 matching images
+        .take(4)
         .collect();
 
     if all_images.len() < 2 {
-        eprintln!("Skipping test: Need at least 2 landscape Kodak images");
+        eprintln!("Skipping test: Need at least 2 CID22 images");
         return;
     }
 
@@ -675,37 +668,32 @@ fn test_context_reuse_multiple_images() {
 /// when CPU returns ~60 for extreme distortion.
 #[test]
 fn test_extreme_distortion_context_reuse() {
-    const KODAK_PATH: &str = "/home/lilith/work/codec-corpus/kodak";
+    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/training";
 
-    let kodak_dir = Path::new(KODAK_PATH);
-    if !kodak_dir.exists() {
-        eprintln!("Skipping test: Kodak corpus not found at {}", KODAK_PATH);
+    let corpus_dir = Path::new(CORPUS_PATH);
+    if !corpus_dir.exists() {
+        eprintln!("Skipping test: CID22 corpus not found at {}", CORPUS_PATH);
         return;
     }
 
     let ctx = CudaContext::new();
 
-    // Load landscape images (768x512) only
-    let images: Vec<_> = (1..=24)
-        .filter_map(|i| {
-            let name = format!("{}.png", i);
-            let path = kodak_dir.join(&name);
-            if path.exists() {
-                let img = load_image(&path);
-                if img.0 == 768 && img.1 == 512 {
-                    Some((name, img))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+    // Load CID22 images (all 512x512)
+    let images: Vec<_> = std::fs::read_dir(corpus_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map_or(false, |e| e == "png"))
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().to_string();
+            let img = load_image(&path);
+            Some((name, img))
         })
         .take(4)
         .collect();
 
     if images.is_empty() {
-        eprintln!("Skipping test: No matching Kodak images found");
+        eprintln!("Skipping test: No CID22 images found");
         return;
     }
 
@@ -808,45 +796,44 @@ fn test_extreme_distortion_context_reuse() {
 /// The absolute difference is ~1.5, which is significant for ranking but not for perception.
 #[test]
 fn test_known_high_variance_cases() {
-    const KODAK_PATH: &str = "/home/lilith/work/codec-corpus/kodak";
+    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/training";
 
-    let kodak_dir = Path::new(KODAK_PATH);
-    if !kodak_dir.exists() {
-        eprintln!("Skipping test: Kodak corpus not found at {}", KODAK_PATH);
+    let corpus_dir = Path::new(CORPUS_PATH);
+    if !corpus_dir.exists() {
+        eprintln!("Skipping test: CID22 corpus not found at {}", CORPUS_PATH);
         return;
     }
 
     let ctx = CudaContext::new();
 
-    // Test a mix of landscape and portrait images
-    let test_cases: Vec<(&str, usize, usize)> = vec![
-        ("4.png", 512, 768),  // Portrait - 18% error case
-        ("5.png", 768, 512),  // Landscape - 15% error case
-        ("12.png", 768, 512), // Another landscape test
-    ];
+    // Pick first 3 images from CID22 corpus (all 512x512)
+    let test_images: Vec<_> = std::fs::read_dir(corpus_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map_or(false, |e| e == "png"))
+        .take(3)
+        .collect();
 
     println!("\n=== Known High-Variance Test Cases ===");
     println!("These document known variance at extreme distortion levels.");
     println!(
-        "{:<12} {:>8} {:>12} {:>12} {:>10}",
+        "{:<40} {:>8} {:>12} {:>12} {:>10}",
         "Image", "Size", "CPU Score", "GPU Score", "Error %"
     );
-    println!("{}", "-".repeat(65));
+    println!("{}", "-".repeat(90));
 
     let mut max_error = 0.0f64;
 
-    for (name, expected_w, expected_h) in &test_cases {
-        let path = kodak_dir.join(name);
+    for path in &test_images {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
         if !path.exists() {
             eprintln!("Skipping {}: not found", name);
             continue;
         }
 
-        let (w, h, ref_data) = load_image(&path);
-        if w != *expected_w || h != *expected_h {
-            eprintln!("Skipping {}: unexpected dimensions {}x{}", name, w, h);
-            continue;
-        }
+        let (w, h, ref_data) = load_image(path);
+        let (expected_w, expected_h) = (w, h);
 
         // Create Q1-like extreme distortion (more aggressive than previous test)
         let dis_data: Vec<u8> = ref_data
