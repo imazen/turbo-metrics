@@ -12,7 +12,7 @@ mod consts {
 const BLOCK_WIDTH: usize = 3 * 32;
 
 // We can't allocate shared memory from Rust. This value is defined in shared.bc
-extern "C" {
+unsafe extern "C" {
     /// The ring buffer.
     ///
     /// Logically, for each thread :

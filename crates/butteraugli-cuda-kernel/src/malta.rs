@@ -25,7 +25,7 @@ const SHARED_SIZE: usize = TILE_SIZE + 2 * HALO; // 24
 const SHARED_TOTAL: usize = SHARED_SIZE * SHARED_SIZE; // 576
 
 // We can't allocate shared memory from Rust. This value is defined in shared.ll
-extern "C" {
+unsafe extern "C" {
     /// Shared memory for Malta filter - 24x24 float array flattened
     static mut MALTA_DIFFS: [f32; SHARED_TOTAL];
 }

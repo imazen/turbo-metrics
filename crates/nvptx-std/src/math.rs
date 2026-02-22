@@ -1,5 +1,5 @@
 // libdevice bindings
-extern "C" {
+unsafe extern "C" {
     #[link_name = "__nv_fmaf"]
     pub fn fmaf(x: f32, y: f32, z: f32) -> f32;
     #[link_name = "__nv_fma"]
