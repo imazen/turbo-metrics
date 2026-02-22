@@ -60,7 +60,7 @@ const SRGB8_TO_LINEARF32_LUT: [f32; 256] = [
 ///
 /// Works at the sample level for coalesced reads & writes.
 /// Does not do bound checks - assumes caller handles padding/bounds.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn srgb_to_linear(
     src: *const u8,
     src_pitch: usize,

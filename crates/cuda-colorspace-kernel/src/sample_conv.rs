@@ -22,7 +22,7 @@ unsafe fn f32_to_generic<const BITDEPTH: usize>(
         RoundFromf32::round(v * <Bitdepth<BITDEPTH>>::MAX_VALUE as f32);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn f32_to_8bit(
     src: *const f32,
     src_pitch: usize,

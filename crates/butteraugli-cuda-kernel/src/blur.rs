@@ -22,7 +22,7 @@ fn gauss(x: f32, sigma: f32) -> f32 {
 
 /// Horizontal blur pass using separable Gaussian
 /// Computes Gaussian weights on-the-fly from sigma
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn horizontal_blur_kernel(
     src: *const f32,
     dst: *mut f32,
@@ -69,7 +69,7 @@ pub unsafe extern "ptx-kernel" fn horizontal_blur_kernel(
 
 /// Vertical blur pass using separable Gaussian
 /// Computes Gaussian weights on-the-fly from sigma
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn vertical_blur_kernel(
     src: *const f32,
     dst: *mut f32,
@@ -116,7 +116,7 @@ pub unsafe extern "ptx-kernel" fn vertical_blur_kernel(
 
 /// Tiled Gaussian blur - simple fallback implementation
 /// TODO: Implement optimized shared memory version
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn tiled_blur_kernel(
     src: *const f32,
     dst: *mut f32,
@@ -154,7 +154,7 @@ fn mirror(mut x: i32, size: i32) -> usize {
 /// Horizontal pass of 5x5 mirrored blur.
 /// Uses mirrored boundary handling (matching CPU blur_mirrored_5x5).
 /// Output is transposed for cache-friendly vertical pass.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_horizontal_kernel(
     src: *const f32,
     dst: *mut f32, // Output is transposed: dst[x][y] = result
@@ -193,7 +193,7 @@ pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_horizontal_kernel(
 
 /// Vertical pass of 5x5 mirrored blur.
 /// Input is transposed (from horizontal pass), output is in original orientation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_vertical_kernel(
     src: *const f32, // Transposed input: src[x][y]
     dst: *mut f32,   // Output in original orientation: dst[y][x]

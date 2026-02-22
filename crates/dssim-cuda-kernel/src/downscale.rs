@@ -8,7 +8,7 @@ use nvptx_std::prelude::*;
 ///
 /// This is the primary downscale kernel for DSSIM's multi-scale processing.
 /// Each output pixel is the average of 4 input pixels.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn downscale_plane_by_2(
     src: *const f32,
     src_w: usize,
@@ -46,7 +46,7 @@ pub unsafe extern "ptx-kernel" fn downscale_plane_by_2(
 /// Downscale packed RGB (3 channels interleaved) by 2x.
 ///
 /// Used for initial downscale before LAB conversion if needed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn downscale_rgb_by_2(
     src: *const f32,
     src_w: usize,

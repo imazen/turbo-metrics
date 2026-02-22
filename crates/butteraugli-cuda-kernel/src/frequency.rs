@@ -19,7 +19,7 @@ const HF_AMPLIFY: f32 = 0.132;
 const SUPRESS_S: f32 = 0.653020556257;
 
 /// Convert XYB low-frequency values to weighted values
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn xyb_low_freq_to_vals_kernel(
     x_plane: *mut f32,
     y_plane: *mut f32,
@@ -48,7 +48,7 @@ pub unsafe extern "ptx-kernel" fn xyb_low_freq_to_vals_kernel(
 }
 
 /// Subtract arrays: dst[i] = src1[i] - src2[i]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn subtract_arrays_kernel(
     src1: *const f32,
     src2: *const f32,
@@ -106,7 +106,7 @@ fn maximum_clamp(v: f32, maxval: f32) -> f32 {
 }
 
 /// Subtract and remove range around zero
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn sub_remove_range_kernel(
     first: *mut f32,
     second: *mut f32,
@@ -127,7 +127,7 @@ pub unsafe extern "ptx-kernel" fn sub_remove_range_kernel(
 }
 
 /// Subtract and amplify range around zero
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn sub_amplify_range_kernel(
     first: *mut f32,
     second: *mut f32,
@@ -148,7 +148,7 @@ pub unsafe extern "ptx-kernel" fn sub_amplify_range_kernel(
 }
 
 /// Suppress X by Y: cross-channel masking
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn suppress_x_by_y_kernel(
     x: *mut f32,
     y: *const f32,
@@ -169,7 +169,7 @@ pub unsafe extern "ptx-kernel" fn suppress_x_by_y_kernel(
 }
 
 /// Separate HF from UHF
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn separate_hf_uhf_kernel(hf: *mut f32, uhf: *mut f32, size: usize) {
     let idx = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
@@ -194,7 +194,7 @@ pub unsafe extern "ptx-kernel" fn separate_hf_uhf_kernel(hf: *mut f32, uhf: *mut
 }
 
 /// Remove range around zero (standalone)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn remove_range_kernel(arr: *mut f32, size: usize, w: f32) {
     let idx = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
@@ -208,7 +208,7 @@ pub unsafe extern "ptx-kernel" fn remove_range_kernel(arr: *mut f32, size: usize
 }
 
 /// Amplify range around zero (standalone)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn amplify_range_kernel(arr: *mut f32, size: usize, w: f32) {
     let idx = (core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize

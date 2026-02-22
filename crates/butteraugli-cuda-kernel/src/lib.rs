@@ -4,6 +4,8 @@
 //! Based on the Vship GPU implementation.
 
 #![no_std]
+#![allow(unsafe_op_in_unsafe_fn)]
+#![allow(static_mut_refs)]
 #![feature(stdarch_nvptx)]
 #![feature(abi_ptx)]
 #![feature(asm_experimental_arch)]

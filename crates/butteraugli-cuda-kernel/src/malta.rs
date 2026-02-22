@@ -468,7 +468,7 @@ fn compute_diff(lum0: f32, lum1: f32, norm1: f32, norm2_0gt1: f32, norm2_0lt1: f
 ///   let len2 = 3.75_f64 * 2.0 + 1.0;
 ///   let norm2_0gt1 = (mulli * (k_weight0 * w_0gt1).sqrt() / len2 * norm1) as f32;
 ///   let norm2_0lt1 = (mulli * (k_weight1 * w_0lt1).sqrt() / len2 * norm1) as f32;
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn malta_diff_map_kernel(
     lum0: *const f32,
     lum1: *const f32,
@@ -544,7 +544,7 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_kernel(
 ///   let len2 = 3.75_f64 * 2.0 + 1.0;
 ///   let norm2_0gt1 = (mulli * (k_weight0 * w_0gt1).sqrt() / len2 * norm1) as f32;
 ///   let norm2_0lt1 = (mulli * (k_weight1 * w_0lt1).sqrt() / len2 * norm1) as f32;
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_kernel(
     lum0: *const f32,
     lum1: *const f32,

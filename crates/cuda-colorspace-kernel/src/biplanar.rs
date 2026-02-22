@@ -70,7 +70,7 @@ unsafe fn biplanaryuv420_to_linearrgb_generic<const BITDEPTH: usize, LumaCR, Chr
 }
 
 // Manual generic monomorphisation
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_8_l_bt709(
     src_y: *const u8,
     src_uv: *const u8,
@@ -85,7 +85,7 @@ pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_8_l_bt709(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_16_l_bt709(
     src_y: *const u16,
     src_uv: *const u16,
@@ -100,7 +100,7 @@ pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_16_l_bt709(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_8_l_bt601_525(
     src_y: *const u8,
     src_uv: *const u8,
@@ -115,7 +115,7 @@ pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_8_l_bt601_525(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_16_l_bt601_525(
     src_y: *const u16,
     src_uv: *const u16,
@@ -130,7 +130,7 @@ pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_16_l_bt601_525(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_8_l_bt601_625(
     src_y: *const u8,
     src_uv: *const u8,
@@ -145,7 +145,7 @@ pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_8_l_bt601_625(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_16_l_bt601_625(
     src_y: *const u16,
     src_uv: *const u16,
@@ -161,7 +161,7 @@ pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_16_l_bt601_625(
 }
 
 /// This directly maps YCbCr values to RGB for inspection.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn biplanaryuv420_to_linearrgb_debug(
     src_y: *const u8,
     src_uv: *const u8,

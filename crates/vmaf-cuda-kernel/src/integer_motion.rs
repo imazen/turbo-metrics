@@ -78,7 +78,7 @@ unsafe fn motion_generic<const N: usize>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn motion_8(
     width: usize,
     height: usize,
@@ -103,7 +103,7 @@ pub unsafe extern "ptx-kernel" fn motion_8(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn motion_10(
     width: usize,
     height: usize,
@@ -128,7 +128,7 @@ pub unsafe extern "ptx-kernel" fn motion_10(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn motion_12(
     width: usize,
     height: usize,

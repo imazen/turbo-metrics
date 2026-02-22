@@ -83,7 +83,7 @@ unsafe fn rgb_to_lab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 ///
 /// Input: Packed RGB (RGBRGBRGB...) in linear light
 /// Output: Three separate planes (L, a, b)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn linear_to_lab_planar(
     src: *const f32,
     src_pitch: usize,
@@ -114,7 +114,7 @@ pub unsafe extern "ptx-kernel" fn linear_to_lab_planar(
 /// Convert packed linear RGB to packed LAB (interleaved).
 ///
 /// Useful when we want to keep data packed for memory efficiency.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn linear_to_lab_packed(
     src: *const f32,
     src_pitch: usize,

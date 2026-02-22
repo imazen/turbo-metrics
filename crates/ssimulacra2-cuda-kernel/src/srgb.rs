@@ -55,7 +55,7 @@ const SRGB8_TO_LINEARF32_LUT: [f32; 256] = [
 /// Does not do bound checks as it assumes it can read & write past bounds.
 /// When working on full images, the image must be padded.
 /// In other cases, this kernel will touch more samples on the edge.
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "ptx-kernel" fn srgb_to_linear(
     src: *mut u8,
     src_line_step: usize,

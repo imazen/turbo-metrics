@@ -30,7 +30,7 @@ const C2: f32 = 0.0009; // (0.03)²
 /// The kernel computes the full SSIM formula including subtracting μ² terms.
 ///
 /// Output: SSIM map (values typically 0-1, 1 = identical)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn compute_ssim(
     mu1: *const f32,
     mu1_pitch: usize,
@@ -95,7 +95,7 @@ pub unsafe extern "ptx-kernel" fn compute_ssim(
 /// - mu2: blur(dis)
 /// - img2_sq_blur: blur(dis²)
 /// - img12_blur: blur(ref * dis)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn compute_ssim_precomputed_ref(
     // Reference (precomputed)
     mu1: *const f32,
@@ -153,7 +153,7 @@ pub unsafe extern "ptx-kernel" fn compute_ssim_precomputed_ref(
 /// before computing the SSIM formula.
 ///
 /// Takes 15 input buffers (5 statistics × 3 channels) and produces single SSIM map.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn compute_ssim_lab(
     // Reference mu (L, a, b)
     mu1_l: *const f32,
@@ -242,7 +242,7 @@ pub unsafe extern "ptx-kernel" fn compute_ssim_lab(
 /// Compute |scalar - value| for each pixel (for MAD computation).
 ///
 /// Used to compute the Mean Absolute Deviation from the average SSIM.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn compute_abs_diff_scalar(
     src: *const f32,
     src_pitch: usize,

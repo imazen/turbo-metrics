@@ -47,7 +47,7 @@ unsafe fn srgb_inverse_oetf(x: f32) -> f32 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn srgb_to_linear_u8_lookup(
     src: *const u8,
     src_pitch: usize,
@@ -84,7 +84,7 @@ unsafe fn srgb_to_linear<const BITDEPTH: usize>(
     *dst.byte_add(y * dst_pitch).add(x) = srgb_inverse_oetf(Bitdepth::<BITDEPTH>::conv_to_f(v));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn srgb_to_linear_u8(
     src: *const u8,
     src_pitch: usize,
@@ -96,7 +96,7 @@ pub unsafe extern "ptx-kernel" fn srgb_to_linear_u8(
     srgb_to_linear::<8>(src, src_pitch, dst, dst_pitch, width, height)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn srgb_to_linear_u16(
     src: *const u16,
     src_pitch: usize,
@@ -108,7 +108,7 @@ pub unsafe extern "ptx-kernel" fn srgb_to_linear_u16(
     srgb_to_linear::<16>(src, src_pitch, dst, dst_pitch, width, height)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn srgb_to_linear_f32(
     src: *const f32,
     src_pitch: usize,

@@ -23,7 +23,7 @@ const KERNEL: [[f32; 3]; 3] = [
 /// Apply 3x3 Gaussian blur to a single plane.
 ///
 /// Uses edge clamping (replicate boundary pixels).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn blur_3x3(
     src: *const f32,
     src_pitch: usize,
@@ -60,7 +60,7 @@ pub unsafe extern "ptx-kernel" fn blur_3x3(
 /// Compute element-wise square: dst = src * src
 ///
 /// Used before blurring to compute blur(x^2) for variance.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn square(
     src: *const f32,
     src_pitch: usize,
@@ -80,7 +80,7 @@ pub unsafe extern "ptx-kernel" fn square(
 /// Compute element-wise product: dst = src1 * src2
 ///
 /// Used to compute img1 * img2 before blurring for covariance.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn multiply(
     src1: *const f32,
     src1_pitch: usize,
@@ -104,7 +104,7 @@ pub unsafe extern "ptx-kernel" fn multiply(
 ///
 /// More efficient than separate square + blur as it reads src only once
 /// and doesn't need intermediate storage.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn blur_squared(
     src: *const f32,
     src_pitch: usize,
@@ -138,7 +138,7 @@ pub unsafe extern "ptx-kernel" fn blur_squared(
 /// Fused blur of product: dst = blur(src1 * src2)
 ///
 /// Used for covariance: blur(img1 * img2)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn blur_product(
     src1: *const f32,
     src1_pitch: usize,

@@ -39,7 +39,7 @@ fn mask_dc_y(delta: f32) -> f32 {
 /// Compute final diffmap from masked AC and DC differences
 ///
 /// diffmap = sqrt(maskY * (ac0 + ac1 + ac2) + maskDcY * (dc0 + dc1 + dc2))
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn compute_diffmap_kernel(
     mask: *const f32,
     block_diff_dc0: *const f32,
@@ -71,7 +71,7 @@ pub unsafe extern "ptx-kernel" fn compute_diffmap_kernel(
 
 /// L2 difference: accumulate squared difference with weight
 /// Used for simple difference metrics
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn l2_diff_kernel(
     src1: *const f32,
     src2: *const f32,
@@ -96,7 +96,7 @@ pub unsafe extern "ptx-kernel" fn l2_diff_kernel(
 /// - Primary symmetric quadratic: diff^2 * w_0gt1 * 0.8
 /// - Secondary half-open quadratic: v^2 * w_0lt1 * 0.8
 ///   where v captures values outside "acceptable" range
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn l2_asym_diff_kernel(
     src1: *const f32,
     src2: *const f32,
@@ -153,7 +153,7 @@ pub unsafe extern "ptx-kernel" fn l2_asym_diff_kernel(
 
 /// Compute x^q for each element (for norm calculation)
 /// The actual reduction/sum will be done on host side using NPP
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn power_elements_kernel(
     src: *const f32,
     dst: *mut f32,

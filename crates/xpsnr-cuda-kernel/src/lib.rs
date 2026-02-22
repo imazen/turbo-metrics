@@ -1,4 +1,6 @@
 #![no_std]
+#![allow(unsafe_op_in_unsafe_fn)]
+#![allow(static_mut_refs)]
 #![feature(stdarch_nvptx)]
 #![feature(abi_ptx)]
 #![feature(asm_experimental_arch)]
@@ -35,7 +37,7 @@ const XPSNR_GAMMA: u32 = 2;
 //     sse
 // }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn xpsnr_support_8(
     ref_: *const u8,
     ref_pitch: usize,
@@ -91,7 +93,7 @@ pub unsafe extern "ptx-kernel" fn xpsnr_support_8(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn xpsnr_postprocess(
     sse: *const u32,
     sact: *const u32,

@@ -23,7 +23,7 @@ const MASK_TO_ERROR_MUL: f32 = 10.0;
 /// Matches libjxl's CombineChannelsForMasking
 ///
 /// Formula: sqrt((uhf_x + hf_x)² * 2.5² + (uhf_y * 0.4 + hf_y * 0.4)²)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn combine_channels_for_masking_kernel(
     hf_x: *const f32,
     uhf_x: *const f32,
@@ -50,7 +50,7 @@ pub unsafe extern "ptx-kernel" fn combine_channels_for_masking_kernel(
 
 /// MaskToErrorMul: Add contribution from blurred UHF Y difference to block_diff_ac[Y]
 /// This is called after mask computation to add additional psychovisual weighting
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn mask_to_error_mul_kernel(
     blurred1: *const f32,    // Blurred UHF Y from image 1
     blurred2: *const f32,    // Blurred UHF Y from image 2
@@ -71,7 +71,7 @@ pub unsafe extern "ptx-kernel" fn mask_to_error_mul_kernel(
 
 /// Precompute diff values for masking
 /// Applies sqrt(mul * |x| + bias) - sqrt(bias)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn diff_precompute_kernel(
     src: *const f32,
     dst: *mut f32,
@@ -110,7 +110,7 @@ fn store_min3(v: f32, min0: &mut f32, min1: &mut f32, min2: &mut f32) {
 
 /// Fuzzy erosion - morphological operation for mask refinement
 /// Uses weighted average of 3 minimum values in 3x3 neighborhood (step 3)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn fuzzy_erosion_kernel(
     src: *const f32,
     dst: *mut f32,

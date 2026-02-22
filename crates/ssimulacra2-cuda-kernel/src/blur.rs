@@ -30,7 +30,7 @@ unsafe extern "C" {
 ///
 /// Implements "Recursive Implementation of the Gaussian Filter Using Truncated
 /// Cosine Functions" by Charalampidis [2016]. Derived from the ssimulacra2 impl.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn blur_plane_pass_fused(
     width: usize,
     height: usize,

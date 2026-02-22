@@ -78,7 +78,7 @@ unsafe fn opsin_absorbance(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 }
 
 /// Linear RGB to XYB for a packed image in place.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn linear_to_xyb_packed(
     width: usize,
     height: usize,
@@ -101,7 +101,7 @@ pub unsafe extern "ptx-kernel" fn linear_to_xyb_packed(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn linear_to_xyb_planar(
     width: usize,
     height: usize,

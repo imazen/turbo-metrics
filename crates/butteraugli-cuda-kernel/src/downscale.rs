@@ -4,7 +4,7 @@ use nvptx_std::prelude::*;
 
 /// Downsample image by 2x using simple averaging
 /// Output dimensions: ((width-1)/2+1, (height-1)/2+1)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn downsample_2x_kernel(
     src: *const f32,
     dst: *mut f32,
@@ -62,7 +62,7 @@ pub unsafe extern "ptx-kernel" fn downsample_2x_kernel(
 /// Matches libjxl/butteraugli's add_supersampled_2x heuristic:
 ///   mixed = prev * (1 - K_HEURISTIC_MIXING * weight) + weight * src
 /// where K_HEURISTIC_MIXING = 0.3
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn add_upsample_2x_kernel(
     dst: *mut f32,
     src: *const f32,

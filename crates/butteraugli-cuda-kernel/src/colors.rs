@@ -88,7 +88,7 @@ fn opsin_absorbance(r: f32, g: f32, b: f32, clamp: bool) -> (f32, f32, f32) {
 
 /// Convert sRGB (u8) to linear RGB (f32)
 /// Processes packed RGB data (3 channels interleaved)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn srgb_to_linear_kernel(
     src: *const u8,
     src_pitch: usize,
@@ -120,7 +120,7 @@ pub unsafe extern "ptx-kernel" fn srgb_to_linear_kernel(
 ///
 /// This is the core Butteraugli color space transformation that uses
 /// spatially-varying adaptation based on local brightness.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn opsin_dynamics_kernel(
     // Linear RGB planes (input, modified in-place to XYB)
     src_r: *mut f32,
@@ -185,7 +185,7 @@ pub unsafe extern "ptx-kernel" fn opsin_dynamics_kernel(
 
 /// Deinterleave 3-channel image: RGB packed to R, G, B planes
 /// Input: RGBRGBRGB... Output: RRR..., GGG..., BBB...
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn deinterleave_3ch_kernel(
     src: *const f32,
     src_pitch: usize,
@@ -220,7 +220,7 @@ pub unsafe extern "ptx-kernel" fn deinterleave_3ch_kernel(
 /// This matches the CPU butteraugli's OpsinDynamicsImage when the blur
 /// equals the input (i.e., uniform regions). For the full implementation,
 /// use opsin_dynamics_kernel which includes blur-based adaptation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn linear_to_xyb_planar_kernel(
     src: *const f32,
     src_pitch: usize,
@@ -273,7 +273,7 @@ pub unsafe extern "ptx-kernel" fn linear_to_xyb_planar_kernel(
 
 /// Convert linear RGB to Butteraugli XYB (interleaved output)
 /// Simpler version for direct conversion without adaptation
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn linear_to_xyb_kernel(
     src: *const f32,
     src_pitch: usize,

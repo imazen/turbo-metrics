@@ -1,7 +1,7 @@
 use core::mem;
 use nvptx_std::prelude::*;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn compute_error_maps(
     w: usize,
     h: usize,

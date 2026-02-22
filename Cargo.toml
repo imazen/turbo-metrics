@@ -64,7 +64,7 @@ butteraugli-cuda = { version = "0.1", path = "crates/butteraugli-cuda", default-
 dssim-cuda = { version = "0.1", path = "crates/dssim-cuda", default-features = false }
 
 array-init = "2"
-bindgen = "0.70"
+bindgen = "0.72"
 bitstream-io = "2"
 clap = { version = "4", default-features = false, features = ["color", "derive", "error-context", "help", "std", "usage", "wrap_help"] }
 csv = "1"

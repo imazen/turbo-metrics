@@ -1,7 +1,7 @@
 use nvptx_std::prelude::*;
 
 /// Downscale by taking the average of 2x2 patches
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn downscale_by_2(
     src_w: usize,
     src_h: usize,
@@ -35,7 +35,7 @@ pub unsafe extern "ptx-kernel" fn downscale_by_2(
 }
 
 /// Downscale by taking the average of 2x2 patches
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "ptx-kernel" fn downscale_plane_by_2(
     src_w: usize,
     src_h: usize,
