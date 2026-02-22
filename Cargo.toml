@@ -40,7 +40,7 @@ resolver = "2"
 authors = ["Guillaume Anthouard <guillaume.anthouard@hotmail.fr>"]
 homepage = "https://github.com/Gui-Yom/turbo-metrics"
 repository = "https://github.com/Gui-Yom/turbo-metrics"
-edition = "2021"
+edition = "2024"
 
 [workspace.dependencies]
 amf = { version = "0.1", path = "crates/amf", default-features = false }
