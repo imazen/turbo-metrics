@@ -15,6 +15,25 @@ use std::path::Path;
 use zune_core::colorspace::ColorSpace;
 use zune_core::options::DecoderOptions;
 
+/// Get CID22 corpus path from CODEC_CORPUS_PATH env var or default.
+fn cid22_corpus_path() -> String {
+    if let Ok(p) = std::env::var("CODEC_CORPUS_PATH") {
+        format!("{}/CID22/CID22-512/training", p)
+    } else {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let candidates = [
+            manifest.join("../../../codec-corpus/CID22/CID22-512/training"),
+            manifest.join("../../../../codec-corpus/CID22/CID22-512/training"),
+        ];
+        for c in &candidates {
+            if c.exists() {
+                return c.to_string_lossy().into_owned();
+            }
+        }
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/training".into()
+    }
+}
+
 /// CUDA context state (initialized once)
 struct CudaContext {
     stream: CuStream,
@@ -548,12 +567,12 @@ fn test_jpeg_quality_summary() {
 /// on certain images.
 #[test]
 fn test_context_reuse_multiple_images() {
-    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/training";
+    let corpus_path = cid22_corpus_path();
 
     // Skip if corpus not available
-    let corpus_dir = Path::new(CORPUS_PATH);
+    let corpus_dir = Path::new(&corpus_path);
     if !corpus_dir.exists() {
-        eprintln!("Skipping test: CID22 corpus not found at {}", CORPUS_PATH);
+        eprintln!("Skipping test: CID22 corpus not found at {}", corpus_path);
         return;
     }
 
@@ -668,11 +687,11 @@ fn test_context_reuse_multiple_images() {
 /// when CPU returns ~60 for extreme distortion.
 #[test]
 fn test_extreme_distortion_context_reuse() {
-    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/training";
+    let corpus_path = cid22_corpus_path();
 
-    let corpus_dir = Path::new(CORPUS_PATH);
+    let corpus_dir = Path::new(&corpus_path);
     if !corpus_dir.exists() {
-        eprintln!("Skipping test: CID22 corpus not found at {}", CORPUS_PATH);
+        eprintln!("Skipping test: CID22 corpus not found at {}", corpus_path);
         return;
     }
 
@@ -796,11 +815,11 @@ fn test_extreme_distortion_context_reuse() {
 /// The absolute difference is ~1.5, which is significant for ranking but not for perception.
 #[test]
 fn test_known_high_variance_cases() {
-    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/training";
+    let corpus_path = cid22_corpus_path();
 
-    let corpus_dir = Path::new(CORPUS_PATH);
+    let corpus_dir = Path::new(&corpus_path);
     if !corpus_dir.exists() {
-        eprintln!("Skipping test: CID22 corpus not found at {}", CORPUS_PATH);
+        eprintln!("Skipping test: CID22 corpus not found at {}", corpus_path);
         return;
     }
 
