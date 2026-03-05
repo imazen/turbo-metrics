@@ -15,23 +15,25 @@ use std::path::Path;
 use zune_core::colorspace::ColorSpace;
 use zune_core::options::DecoderOptions;
 
-/// Get CID22 corpus path from CODEC_CORPUS_PATH env var or default.
+/// Get CID22 corpus path from CODEC_CORPUS_DIR env var or default.
 fn cid22_corpus_path() -> String {
-    if let Ok(p) = std::env::var("CODEC_CORPUS_PATH") {
-        format!("{}/CID22/CID22-512/training", p)
-    } else {
-        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let candidates = [
-            manifest.join("../../../codec-corpus/CID22/CID22-512/training"),
-            manifest.join("../../../../codec-corpus/CID22/CID22-512/training"),
-        ];
-        for c in &candidates {
-            if c.exists() {
-                return c.to_string_lossy().into_owned();
-            }
+    for var in ["CODEC_CORPUS_DIR", "CODEC_CORPUS_PATH"] {
+        if let Ok(p) = std::env::var(var) {
+            return format!("{}/CID22/CID22-512/training", p);
         }
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/training".into()
     }
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest.join("../../../codec-corpus/CID22/CID22-512/training"),
+        manifest.join("../../../../codec-corpus/CID22/CID22-512/training"),
+    ];
+    for c in &candidates {
+        if c.exists() {
+            return c.to_string_lossy().into_owned();
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    format!("{}/work/codec-corpus/CID22/CID22-512/training", home)
 }
 
 /// CUDA context state (initialized once)
