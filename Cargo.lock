@@ -107,9 +107,9 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.7.0"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61bd463aee29794a0318115ab857c2486842b28956c3f75365b304f1047b4758"
+checksum = "b31252c47e70c7056709e9f98842aef4f709056c2b3a4f666c584f8cc37f7ca0"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -117,9 +117,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.7.0"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02b01e2d131ffadba47bdff5d5e1d5d8a3b9743dc6b3d6ce4847ae2d6d306058"
+checksum = "3a97189db9dffc2e13364c6f56461085d65743ff4d17890d6b80744203aae92b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -221,16 +221,13 @@ checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "butteraugli"
-version = "0.7.2"
+version = "0.9.0"
 dependencies = [
  "archmage",
  "imgref",
  "magetypes",
- "multiversed",
- "multiversion",
+ "rayon",
  "rgb",
- "simd_aligned",
- "wide",
 ]
 
 [[package]]
@@ -461,6 +458,31 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "crossbeam-deque"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crunchy"
@@ -1072,9 +1094,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "magetypes"
-version = "0.7.0"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d55dd4e83507ff9fe129b01669adca1e302ef346dac252ef59139c78def312a"
+checksum = "c805c315148e092279cd19d011ce4b22ff9d3cc593cca089364f6501d12087b1"
 dependencies = [
  "archmage",
 ]
@@ -1164,39 +1186,6 @@ name = "mpeg4-audio-const"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96a1fe2275b68991faded2c80aa4a33dba398b77d276038b8f50701a22e55918"
-
-[[package]]
-name = "multiversed"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dabf9b113e96ba60fa3958fdaf4aba3d8ed9f9b67c14fbcb1b0e99708715ca8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "multiversion"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7edb7f0ff51249dfda9ab96b5823695e15a052dc15074c9dbf3d118afaf2c201"
-dependencies = [
- "multiversion-macros",
- "target-features",
-]
-
-[[package]]
-name = "multiversion-macros"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b093064383341eb3271f42e381cb8f10a01459478446953953c75d24bd339fc0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
- "target-features",
-]
 
 [[package]]
 name = "mutate_once"
@@ -1416,6 +1405,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
 
 [[package]]
+name = "rayon"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "regex"
 version = "1.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1506,9 +1515,9 @@ dependencies = [
 
 [[package]]
 name = "safe_unaligned_simd"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1d612ce01a584cfab72164fb3f689112249fafeab7b4181c14601d19b34cb0a"
+checksum = "f9c874fb993656d484725d58fbfddb39dfcf98ebcadc1a1d09568aa6b39bafba"
 
 [[package]]
 name = "semver"
@@ -1618,15 +1627,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 
 [[package]]
-name = "simd_aligned"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43bb409d114ccef278270a2ccde8fc8ee444d1863e6419c4c75aab6525c1b8cc"
-dependencies = [
- "wide",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1690,12 +1690,6 @@ dependencies = [
  "toml",
  "version-compare",
 ]
-
-[[package]]
-name = "target-features"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1bbb9f3c5c463a01705937a24fdabc5047929ac764b2d5b9cf681c1f5041ed5"
 
 [[package]]
 name = "target-lexicon"
