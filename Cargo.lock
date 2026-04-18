@@ -107,9 +107,9 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.12"
+version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b31252c47e70c7056709e9f98842aef4f709056c2b3a4f666c584f8cc37f7ca0"
+checksum = "7f165966eded87f22afbd374880303fc58b518e1395d31c9988724d83a2c7304"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -117,9 +117,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.12"
+version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a97189db9dffc2e13364c6f56461085d65743ff4d17890d6b80744203aae92b"
+checksum = "f96062eefa98c3761e387bc1a11845fba7b19d4dece5c5d3079c7315a8bfdcd2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -221,7 +221,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
 name = "butteraugli"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "archmage",
  "imgref",
@@ -1093,9 +1093,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "magetypes"
-version = "0.9.12"
+version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c805c315148e092279cd19d011ce4b22ff9d3cc593cca089364f6501d12087b1"
+checksum = "9ed3580f77368bc63a366dc6afadb5a6b1bdfff07a22d84fe2c9d16b97dcdf96"
 dependencies = [
  "archmage",
 ]
