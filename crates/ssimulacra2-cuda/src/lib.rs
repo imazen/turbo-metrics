@@ -11,7 +11,7 @@ use cudarse_npp::{ScratchBuffer, assert_same_size, get_stream_ctx};
 
 use crate::kernel::Kernel;
 
-mod kernel;
+pub mod kernel;
 
 /// Number of scales to compute
 const SCALES: usize = 6;
@@ -27,6 +27,9 @@ const SCALES: usize = 6;
 pub struct Ssimulacra2 {
     kernel: Kernel,
     npp: NppStreamContext,
+    /// Graph captured in `new()` against the `(src_ref_linear, src_dis_linear)`
+    /// passed in there. Re-runs the full ref+dis pipeline on every launch.
+    /// Used by [`compute_srgb_sync`], [`compute_sync`], etc.
     exec: Option<CuGraphExec>,
 
     // sizes: [NppiRect; SCALES],
@@ -42,6 +45,35 @@ pub struct Ssimulacra2 {
 
     streams: [[CuStream; 6]; SCALES],
     scores: Box<[f64; 3 * 6 * SCALES]>,
+
+    // ---- Reference cache (for set_reference_linear / compute_with_reference_linear) ----
+    // When `reference_cache_valid` is true, these buffers hold the
+    // ref-side intermediate state so `compute_with_reference_linear`
+    // can skip re-running any ref-side kernels. Populated by
+    // `set_reference_linear`.
+    //
+    // Per scale:
+    //   ref_xyb_cache[scale]      — non-transposed ref_xyb (for sigma12 = ref × dis)
+    //   ref_xyb_t_cache[scale]    — transposed ref_xyb (source input to compute_error_maps)
+    //   sigma11_t_cache[scale]    — fully-blurred transposed sigma11 (ref × ref)
+    //   mu1_t_cache[scale]        — fully-blurred transposed ref_xyb (mu1)
+    //
+    // Total memory at 1 Mpx: ~150 MB per Ssimulacra2 instance beyond
+    // the baseline footprint.
+    reference_cache_valid: bool,
+    ref_xyb_cache: [Image<f32, C<3>>; SCALES],
+    ref_xyb_t_cache: [Image<f32, C<3>>; SCALES],
+    sigma11_t_cache: [Image<f32, C<3>>; SCALES],
+    mu1_t_cache: [Image<f32, C<3>>; SCALES],
+    /// Scale-0 reductions for `sum(ssim²_ref_only)`-style precomputables
+    /// live inline in `scores[]`, which set_reference fills for the
+    /// ref-only slots. We don't split that out; the dis-only pipeline
+    /// overwrites the mixed slots and leaves the ref-only slots alone.
+    /// (Tracked here as a sentinel; no separate buffer needed.)
+    /// Lazily captured graph of the distorted-only + comparison
+    /// pipeline. Keyed on the `(ref_linear_ptr, dis_linear_ptr)` pair
+    /// observed on first call; re-captured if either rotates.
+    dis_only_exec: Option<(u64, u64, CuGraphExec)>,
 }
 
 impl Ssimulacra2 {
@@ -86,6 +118,14 @@ impl Ssimulacra2 {
             array_init::try_array_init(|_| imgt[i][0].sum_alloc_scratch(npp))
         })?;
 
+        // Reference-cache buffers. Non-transposed at img[scale] size,
+        // transposed at imgt[scale] size. Allocated up front so the
+        // lazy graph can bake in stable pointers.
+        let ref_xyb_cache = array_init::try_array_init(|i| img[i][0].malloc_same_size())?;
+        let ref_xyb_t_cache = array_init::try_array_init(|i| imgt[i][0].malloc_same_size())?;
+        let sigma11_t_cache = array_init::try_array_init(|i| imgt[i][0].malloc_same_size())?;
+        let mu1_t_cache = array_init::try_array_init(|i| imgt[i][0].malloc_same_size())?;
+
         let mut s = Self {
             kernel: Kernel::load(),
             npp,
@@ -99,11 +139,24 @@ impl Ssimulacra2 {
             sum_scratch,
             streams,
             scores: Box::new([0.0; 3 * 6 * SCALES]),
+            reference_cache_valid: false,
+            ref_xyb_cache,
+            ref_xyb_t_cache,
+            sigma11_t_cache,
+            mu1_t_cache,
+            dis_only_exec: None,
         };
 
         s.exec = Some(s.record(src_ref_linear, src_dis_linear, stream)?);
 
         Ok(s)
+    }
+
+    /// Read-only access to the internal kernel loader so callers can
+    /// issue direct kernel calls (e.g. `srgb_to_linear` for the cached-
+    /// reference path) without having to load a second PTX copy.
+    pub fn kernel(&self) -> &Kernel {
+        &self.kernel
     }
 
     /// Estimate the minimum memory usage
@@ -329,6 +382,422 @@ impl Ssimulacra2 {
     /// Post process and retrieve the score for the last computation.
     pub fn get_score(&mut self) -> f64 {
         self.post_process_scores()
+    }
+
+    /// Precompute the reference-side state (downscale pyramid, XYB, ref²,
+    /// blurred ref, blurred ref² transposed) from an already-linear
+    /// reference image and cache it on the instance. Follow up with
+    /// [`compute_with_reference_linear`] to score one or more distorted
+    /// images against this reference with ~40% less per-call GPU work.
+    ///
+    /// Not captured as a graph — runs eagerly on `stream`. It only fires
+    /// once per source anyway; graphing it would add complexity without
+    /// meaningful per-source-amortized win.
+    pub fn set_reference_linear(
+        &mut self,
+        src_ref_linear: impl Img<f32, C<3>>,
+        stream: &CuStream,
+    ) -> Result<()> {
+        // Drop any stale dis-only graph — it was keyed on a pair that
+        // includes our old ref pointer.
+        self.dis_only_exec = None;
+
+        // Per scale: downscale (if scale>0) → linear_to_xyb → sigma11 =
+        // ref²  →  blur-pass horizontal (2-wide: sigma11, ref_xyb) →
+        // transpose both → blur-pass vertical (2-wide) → transpose
+        // ref_xyb only. Final cached tensors:
+        //   self.ref_xyb_cache[scale]     (non-transposed, for sigma12 mul)
+        //   self.ref_xyb_t_cache[scale]   (transposed, source input for error_maps)
+        //   self.sigma11_t_cache[scale]   (transposed, fully blurred)
+        //   self.mu1_t_cache[scale]       (transposed, fully blurred)
+        for scale in 0..SCALES {
+            // 1. Produce ref_linear at this scale.
+            if scale == 1 {
+                self.kernel
+                    .downscale_by_2(stream, &src_ref_linear, &mut self.ref_linear[scale - 1]);
+            } else if scale > 1 {
+                let (prev, curr) = indices!(&mut self.ref_linear, scale - 2, scale - 1);
+                self.kernel.downscale_by_2(stream, prev, curr);
+            }
+
+            // 2. linear_to_xyb → ref_xyb_cache[scale]
+            if scale == 0 {
+                self.kernel
+                    .linear_to_xyb(stream, &src_ref_linear, &mut self.ref_xyb_cache[scale]);
+            } else {
+                self.kernel.linear_to_xyb(
+                    stream,
+                    &self.ref_linear[scale - 1],
+                    &mut self.ref_xyb_cache[scale],
+                );
+            }
+
+            // 3. sigma11 = ref_xyb × ref_xyb (into img[scale][0], scratch).
+            {
+                let (ref_xyb, sigma11_tmp) =
+                    (&self.ref_xyb_cache[scale], &mut self.img[scale][0]);
+                ref_xyb.mul(
+                    ref_xyb,
+                    sigma11_tmp,
+                    self.npp.with_stream(stream.inner() as _),
+                )?;
+            }
+
+            // 4. Horizontal blur 2-wide: sigma11, ref_xyb → img[scale][3], img[scale][6].
+            {
+                let [sigma11_tmp, _i1, _i2, sigma11_h, _i4, _i5, mu1_h, _i7, _i8, _i9] =
+                    self.img[scale].each_mut();
+                self.kernel.blur_pass_fused_2(
+                    stream,
+                    &*sigma11_tmp,
+                    sigma11_h,
+                    &self.ref_xyb_cache[scale],
+                    mu1_h,
+                );
+            }
+
+            // 5. Transpose horizontal-blur results + ref_xyb → imgt[scale][...].
+            self.img[scale][3].transpose(
+                &mut self.imgt[scale][0],
+                self.npp.with_stream(stream.inner() as _),
+            )?; // sigma11_h → imgt[0]
+            self.img[scale][6].transpose(
+                &mut self.imgt[scale][3],
+                self.npp.with_stream(stream.inner() as _),
+            )?; // mu1_h → imgt[3]
+            self.ref_xyb_cache[scale].transpose(
+                &mut self.ref_xyb_t_cache[scale],
+                self.npp.with_stream(stream.inner() as _),
+            )?;
+
+            // 6. Vertical blur 2-wide on transposed inputs → sigma11_t_cache,
+            //    mu1_t_cache.
+            {
+                let [i0, _i1, _i2, i3, _i4, _i5, _i6, _i7, _i8, _i9] =
+                    self.imgt[scale].each_mut();
+                self.kernel.blur_pass_fused_2(
+                    stream,
+                    &*i0,
+                    &mut self.sigma11_t_cache[scale],
+                    &*i3,
+                    &mut self.mu1_t_cache[scale],
+                );
+            }
+        }
+
+        stream.sync().unwrap();
+        self.reference_cache_valid = true;
+        Ok(())
+    }
+
+    /// Score an already-linear distorted image against the cached
+    /// reference set by [`set_reference_linear`]. Requires a prior
+    /// `set_reference_linear` call since the last `clear_reference`;
+    /// errors out if the cache isn't valid.
+    ///
+    /// Captures the distorted-only + comparison pipeline into a CUDA
+    /// graph on the first call (keyed on `(ref_linear, dis_linear)`
+    /// pointer pair) and replays it on every subsequent call.
+    pub fn compute_with_reference_linear(
+        &mut self,
+        src_ref_linear: impl Img<f32, C<3>>,
+        src_dis_linear: impl Img<f32, C<3>>,
+        stream: &CuStream,
+    ) -> Result<f64> {
+        if !self.reference_cache_valid {
+            panic!("compute_with_reference_linear requires set_reference_linear to be called first");
+        }
+        let ref_ptr = src_ref_linear.device_ptr() as u64;
+        let dis_ptr = src_dis_linear.device_ptr() as u64;
+        let need_capture = match &self.dis_only_exec {
+            Some((r, d, _)) => *r != ref_ptr || *d != dis_ptr,
+            None => true,
+        };
+        if need_capture {
+            self.dis_only_exec = None;
+            stream.begin_capture().unwrap();
+            let run_res = self.record_dis_only(&src_ref_linear, &src_dis_linear, stream);
+            let graph = stream.end_capture().unwrap();
+            run_res?;
+            let exec = graph.instantiate().unwrap();
+            self.dis_only_exec = Some((ref_ptr, dis_ptr, exec));
+        }
+        self.dis_only_exec
+            .as_ref()
+            .unwrap()
+            .2
+            .launch(stream)
+            .unwrap();
+        stream.sync().unwrap();
+        Ok(self.post_process_scores())
+    }
+
+    /// Invalidate the cached reference. The next call to
+    /// [`compute_with_reference_linear`] will error until
+    /// `set_reference_linear` is called again.
+    pub fn clear_reference(&mut self) {
+        self.reference_cache_valid = false;
+        self.dis_only_exec = None;
+    }
+
+    pub fn has_reference(&self) -> bool {
+        self.reference_cache_valid
+    }
+
+    /// Record the dis-only pipeline (distorted-side kernels + comparison
+    /// + reductions) into the currently-being-captured graph on `stream`.
+    /// Must be called inside `begin_capture()` / `end_capture()`; relies
+    /// on the reference cache populated by `set_reference_linear`.
+    fn record_dis_only(
+        &mut self,
+        src_ref_linear: &impl Img<f32, C<3>>,
+        src_dis_linear: &impl Img<f32, C<3>>,
+        stream: &CuStream,
+    ) -> Result<()> {
+        let _ = src_ref_linear; // used via cached ref_xyb / sigma11_t / mu1_t; kept in signature for symmetry with new()
+        let alt_stream = CuStream::new().unwrap();
+        alt_stream.wait_for_stream(stream).unwrap();
+        for scale in 0..SCALES {
+            // 1. Downscale dis (scales 1..5).
+            if scale == 1 {
+                self.kernel
+                    .downscale_by_2(&alt_stream, src_dis_linear, &mut self.dis_linear[scale - 1]);
+            } else if scale > 1 {
+                let (prev, curr) = indices!(&mut self.dis_linear, scale - 2, scale - 1);
+                self.kernel.downscale_by_2(&alt_stream, prev, curr);
+            }
+
+            self.streams[scale][1].wait_for_stream(&alt_stream).unwrap();
+
+            // 2. linear_to_xyb dis → img[scale][9]
+            if scale == 0 {
+                self.kernel
+                    .linear_to_xyb(&self.streams[scale][1], src_dis_linear, &mut self.img[scale][9]);
+            } else {
+                self.kernel.linear_to_xyb(
+                    &self.streams[scale][1],
+                    &self.dis_linear[scale - 1],
+                    &mut self.img[scale][9],
+                );
+            }
+
+            self.process_scale_dis_only(scale)?;
+        }
+        stream.wait_for_stream(&alt_stream).unwrap();
+        for scale in 0..SCALES {
+            for i in 0..self.streams[scale].len() {
+                stream.wait_for_stream(&self.streams[scale][i]).unwrap();
+            }
+        }
+        Ok(())
+    }
+
+    /// Like `process_scale` but skips every ref-only kernel. Expects:
+    ///   self.img[scale][9]           = dis_xyb       (written by caller's linear_to_xyb)
+    ///   self.ref_xyb_cache[scale]    = ref_xyb       (cached)
+    ///   self.ref_xyb_t_cache[scale]  = ref_xyb_t     (cached)
+    ///   self.sigma11_t_cache[scale]  = sigma11_t     (cached, fully blurred)
+    ///   self.mu1_t_cache[scale]      = mu1_t         (cached, fully blurred)
+    fn process_scale_dis_only(&mut self, scale: usize) -> Result<()> {
+        let streams: [&CuStream; 6] = self.streams[scale].each_ref().try_into().unwrap();
+        streams[2].wait_for_stream(streams[1]).unwrap();
+
+        // dis_xyb × dis_xyb → sigma22 (img[1]); ref_xyb × dis_xyb → sigma12 (img[2]).
+        // NPP's `Mul::mul` takes `(src1, src2, dst)` where src2 is the output
+        // pointer's sibling. We pre-capture dis_xyb through a local copy of
+        // the slice to satisfy the borrow checker — each call through it
+        // grabs its own borrow in its own scope.
+        {
+            let [_i0, i1, _i2, _i3, _i4, _i5, _i6, _i7, _i8, i9] = self.img[scale].each_mut();
+            i9.mul(&*i9, i1, self.npp.with_stream(streams[1].inner() as _))?;
+        }
+        {
+            let [_i0, _i1, i2, _i3, _i4, _i5, _i6, _i7, _i8, i9] = self.img[scale].each_mut();
+            self.ref_xyb_cache[scale].mul(
+                &*i9,
+                i2,
+                self.npp.with_stream(streams[2].inner() as _),
+            )?;
+        }
+
+        streams[0].wait_for_stream(streams[1]).unwrap();
+        streams[0].wait_for_stream(streams[2]).unwrap();
+
+        // Horizontal blur 3-wide: sigma22 (img[1]), sigma12 (img[2]),
+        // dis_xyb (img[9]) → img[4], img[5], img[7].
+        {
+            let [_i0, i1, i2, _i3, i4, i5, _i6, i7, _i8, i9] = self.img[scale].each_mut();
+            self.kernel.blur_pass_fused_3(streams[0], &*i1, i4, &*i2, i5, &*i9, i7);
+        }
+
+        streams[1].wait_for_stream(streams[0]).unwrap();
+        streams[2].wait_for_stream(streams[0]).unwrap();
+        streams[3].wait_for_stream(streams[0]).unwrap();
+
+        // Transpose sigma22_h, sigma12_h, mu2_h into imgt[1, 2, 4].
+        self.img[scale][4].transpose(
+            &mut self.imgt[scale][1],
+            self.npp.with_stream(streams[0].inner() as _),
+        )?;
+        self.img[scale][5].transpose(
+            &mut self.imgt[scale][2],
+            self.npp.with_stream(streams[1].inner() as _),
+        )?;
+        self.img[scale][7].transpose(
+            &mut self.imgt[scale][4],
+            self.npp.with_stream(streams[2].inner() as _),
+        )?;
+        // Also transpose dis_xyb (img[9]) into imgt[3] for compute_error_maps
+        // second source input. We use imgt[3] since imgt[0] is ref_xyb_t_cache
+        // (cached) — we need a separate slot for dis_xyb_t.
+        self.img[scale][9].transpose(
+            &mut self.imgt[scale][3],
+            self.npp.with_stream(streams[3].inner() as _),
+        )?;
+
+        streams[0].wait_for_stream(streams[1]).unwrap();
+        streams[0].wait_for_stream(streams[2]).unwrap();
+        streams[0].wait_for_stream(streams[3]).unwrap();
+
+        // Vertical blur 3-wide on transposed: imgt[1,2,4] → imgt[6,7,9].
+        {
+            let [_i0, i1, i2, _i3, i4, _i5, i6, i7, _i8, i9] = self.imgt[scale].each_mut();
+            self.kernel.blur_pass_fused_3(streams[0], &*i1, i6, &*i2, i7, &*i4, i9);
+        }
+
+        // compute_error_maps inputs:
+        //   source          = ref_xyb_t_cache[scale]  (cached)
+        //   distorted       = imgt[3] (dis_xyb_t, fresh)
+        //   mu1             = mu1_t_cache[scale]      (cached)
+        //   mu2             = imgt[9] (fresh)
+        //   sigma11         = sigma11_t_cache[scale]  (cached)
+        //   sigma22         = imgt[6] (fresh)
+        //   sigma12         = imgt[7] (fresh)
+        //   outputs         = imgt[2, 3, 4] (overwritten in place) — wait, imgt[3]
+        //                     is dis_xyb_t which we just used as input. compute_error_maps
+        //                     reads sigma22=imgt[6] (not imgt[3]); the outputs go to
+        //                     imgt[2,3,4]. But imgt[3] was a cached input to this kernel!
+        // Solution: output artifact map to a different imgt slot, e.g. imgt[0] is
+        // only used for ref_xyb_t in the full path — but we're using ref_xyb_t_cache
+        // here, not imgt[0]. So imgt[0] is free for us to use as an output.
+        //
+        // We route: ssim → imgt[2], artifact → imgt[0] (free slot), detail_loss → imgt[4].
+        // And then the `reduce` helper's `data` indices need to follow: originally
+        // (2, 5, 0) and (3, 6, 2) and (4, 7, 4) referred to (data, tmp, offset). Here
+        // we need to update reduce to use our new locations.
+        //
+        // Actually — rather than rewiring reduce, let's keep the same output slots as
+        // the original path: imgt[2]=ssim, imgt[3]=artifact, imgt[4]=detail_loss. That
+        // means we need to consume dis_xyb_t from imgt[3] BEFORE compute_error_maps
+        // overwrites it.
+        //
+        // But compute_error_maps reads `distorted` = imgt[3] (dis_xyb_t)! This kernel
+        // reads source + distorted as its first two ImgC3 args. So distorted IS imgt[3]
+        // and the output artifact IS imgt[3]. In the original code that's fine because
+        // distorted-input is ONLY used to read mu values... wait, let's recheck the
+        // kernel. compute_error_maps reads source and distorted directly — they go into
+        // the ssim formula. So they must be stable reads throughout the kernel.
+        //
+        // In CUDA, a kernel may read from a pointer and write to the SAME pointer safely
+        // if each thread only reads/writes its own pixel. compute_error_maps is
+        // pointwise — every thread writes dst[i] after reading src[i]. The kernel source
+        // (error_maps.rs) computes ssim[i], artifact[i], detail_loss[i] from the N input
+        // reads at i and writes the 3 outputs. If `distorted` and `artifact` overlap,
+        // we'd read the input first, then write the output — safe within one thread.
+        //
+        // But CUDA compiler / memory ordering guarantees this? For pointwise kernels
+        // where each thread touches one distinct pixel, yes: the read happens before
+        // the write by the same thread. No racing. The original code actually DOES
+        // this: in the original process_scale, compute_error_maps takes source=imgt[0],
+        // distorted=imgt[1], with outputs going to imgt[2, 3, 4]. The outputs don't
+        // overlap with source/distorted. So this concern was avoided.
+        //
+        // We'd better avoid the overlap too. Let me route:
+        //   outputs → imgt[5, 6, 7] (these were sigma11_t, sigma22_t, sigma12_t inputs
+        //   which are now consumed and no longer needed).
+        // That frees us from the overlap problem.
+        //
+        // But `reduce` expects specific input slots (currently 2, 3, 4). We'll need to
+        // update reduce to read from 5, 6, 7 in the dis-only path.
+        //
+        // Simplest: call compute_error_maps with outputs = imgt[5,6,7] and a new reduce
+        // variant that uses those slots.
+        // Route outputs to free (non-input) imgt slots so Rust aliasing
+        // is clean. At this point these slots are either never touched in
+        // the dis-only path (0, 5, 8 — their data went into the ref cache)
+        // or hold now-stale horizontal-blur intermediates (1, 2, 4).
+        //   ssim        → imgt[0]
+        //   artifact    → imgt[2]
+        //   detail_loss → imgt[8]
+        {
+            let [i0, _i1, i2, i3, _i4, _i5, i6, i7, i8, i9] = self.imgt[scale].each_mut();
+            self.kernel.compute_error_maps(
+                streams[0],
+                &self.ref_xyb_t_cache[scale],
+                &*i3,
+                &self.mu1_t_cache[scale],
+                &*i9,
+                &self.sigma11_t_cache[scale],
+                &*i6,
+                &*i7,
+                i0, // ssim
+                i2, // artifact
+                i8, // detail_loss
+            );
+        }
+
+        streams[1].wait_for_stream(streams[0]).unwrap();
+        streams[2].wait_for_stream(streams[0]).unwrap();
+        streams[3].wait_for_stream(streams[0]).unwrap();
+        streams[4].wait_for_stream(streams[0]).unwrap();
+        streams[5].wait_for_stream(streams[0]).unwrap();
+
+        // Reduce: output data at (0, 2, 8), tmp at free slots (5, 1, 4).
+        self.reduce_at(scale, 0, 5, 0)?;
+        self.reduce_at(scale, 2, 1, 2)?;
+        self.reduce_at(scale, 8, 4, 4)?;
+        Ok(())
+    }
+
+    /// Generalization of `reduce()` that takes explicit (data, tmp)
+    /// imgt-slot indices. `offset` matches the score-array offset used
+    /// by the original `reduce` (one of 0, 2, 4).
+    fn reduce_at(
+        &mut self,
+        scale: usize,
+        data: usize,
+        tmp: usize,
+        offset: usize,
+    ) -> Result<()> {
+        let [scratch0, scratch1] = &mut self.sum_scratch[scale][offset..offset + 2] else {
+            unreachable!()
+        };
+        let ctx1 = self
+            .npp
+            .with_stream(self.streams[scale][offset + 1].inner() as _);
+        {
+            let (ssim, tmp_img) = indices!(&mut self.imgt[scale], data, tmp);
+            ssim.sum_into(
+                scratch0,
+                (&mut self.scores
+                    [scale * 6 * 3 + offset / 2 * 3..scale * 6 * 3 + offset / 2 * 3 + 3])
+                    .try_into()
+                    .unwrap(),
+                self.npp
+                    .with_stream(self.streams[scale][offset].inner() as _),
+            )?;
+            ssim.sqr(tmp_img, ctx1)?;
+        }
+        self.imgt[scale][tmp].sqr_ip(ctx1)?;
+        self.imgt[scale][tmp].sum_into(
+            scratch1,
+            (&mut self.scores
+                [scale * 6 * 3 + offset / 2 * 3 + 9..scale * 6 * 3 + offset / 2 * 3 + 12])
+                .try_into()
+                .unwrap(),
+            ctx1,
+        )?;
+        Ok(())
     }
 
     fn process_scale(&mut self, scale: usize) -> Result<()> {

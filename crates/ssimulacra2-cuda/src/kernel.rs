@@ -214,6 +214,109 @@ impl Kernel {
     //     }
     // }
 
+    /// Like [`blur_pass_fused`] but only blurs the first 2 pairs in one
+    /// launch (grid_dim.y = 2). Used by `set_reference_linear` to blur
+    /// sigma11 + ref_xyb (mu1) with no wasted slots.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blur_pass_fused_2(
+        &self,
+        stream: &CuStream,
+        src0: impl Img<f32, C<3>>,
+        mut dst0: impl ImgMut<f32, C<3>>,
+        src1: impl Img<f32, C<3>>,
+        mut dst1: impl ImgMut<f32, C<3>>,
+    ) {
+        debug_assert_same_size!(src0, dst0);
+        debug_assert_same_size!(src1, dst1);
+        const THREADS_WIDTH: u32 = 3 * 32;
+        const THREADS_HEIGHT: u32 = 1;
+        let num_blocks_w = (src0.width() * 3 + THREADS_WIDTH - 1) / THREADS_WIDTH;
+        let num_blocks_h = 2;
+        let null: *const f32 = core::ptr::null();
+        let null_mut: *mut f32 = core::ptr::null_mut();
+        unsafe {
+            self.blur_plane_pass_fused
+                .launch(
+                    &LaunchConfig {
+                        grid_dim: (num_blocks_w, num_blocks_h, 1),
+                        block_dim: (THREADS_WIDTH, THREADS_HEIGHT, 1),
+                        shared_mem_bytes: 0,
+                    },
+                    stream,
+                    kernel_params!(
+                        src0.width() as usize * 3,
+                        src0.height() as usize,
+                        src0.device_ptr(),
+                        src1.device_ptr(),
+                        null,
+                        null,
+                        null,
+                        src0.pitch() as usize,
+                        dst0.device_ptr_mut(),
+                        dst1.device_ptr_mut(),
+                        null_mut,
+                        null_mut,
+                        null_mut,
+                        dst0.pitch() as usize,
+                    ),
+                )
+                .expect("Could not launch blur_plane_pass_fused (n=2)");
+        }
+    }
+
+    /// Like [`blur_pass_fused`] but only blurs the first 3 pairs in one
+    /// launch (grid_dim.y = 3). Used by `compute_with_reference_linear`
+    /// to blur sigma22 + sigma12 + dis_xyb (mu2) with no wasted slots.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blur_pass_fused_3(
+        &self,
+        stream: &CuStream,
+        src0: impl Img<f32, C<3>>,
+        mut dst0: impl ImgMut<f32, C<3>>,
+        src1: impl Img<f32, C<3>>,
+        mut dst1: impl ImgMut<f32, C<3>>,
+        src2: impl Img<f32, C<3>>,
+        mut dst2: impl ImgMut<f32, C<3>>,
+    ) {
+        debug_assert_same_size!(src0, dst0);
+        debug_assert_same_size!(src1, dst1);
+        debug_assert_same_size!(src2, dst2);
+        const THREADS_WIDTH: u32 = 3 * 32;
+        const THREADS_HEIGHT: u32 = 1;
+        let num_blocks_w = (src0.width() * 3 + THREADS_WIDTH - 1) / THREADS_WIDTH;
+        let num_blocks_h = 3;
+        let null: *const f32 = core::ptr::null();
+        let null_mut: *mut f32 = core::ptr::null_mut();
+        unsafe {
+            self.blur_plane_pass_fused
+                .launch(
+                    &LaunchConfig {
+                        grid_dim: (num_blocks_w, num_blocks_h, 1),
+                        block_dim: (THREADS_WIDTH, THREADS_HEIGHT, 1),
+                        shared_mem_bytes: 0,
+                    },
+                    stream,
+                    kernel_params!(
+                        src0.width() as usize * 3,
+                        src0.height() as usize,
+                        src0.device_ptr(),
+                        src1.device_ptr(),
+                        src2.device_ptr(),
+                        null,
+                        null,
+                        src0.pitch() as usize,
+                        dst0.device_ptr_mut(),
+                        dst1.device_ptr_mut(),
+                        dst2.device_ptr_mut(),
+                        null_mut,
+                        null_mut,
+                        dst0.pitch() as usize,
+                    ),
+                )
+                .expect("Could not launch blur_plane_pass_fused (n=3)");
+        }
+    }
+
     /// Blur 5 packed images in one kernel launch.
     /// We can treat the images as a single plane because each thread only processes a single column.
     pub fn blur_pass_fused(
