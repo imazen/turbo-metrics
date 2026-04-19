@@ -115,6 +115,44 @@ pub unsafe extern "ptx-kernel" fn srgb_to_linear_kernel(
     *dst_row.add(x) = srgb_to_linear(val);
 }
 
+/// Batched sRGB u8 -> linear f32 conversion.
+///
+/// Processes N images of the same dimensions in one grid launch.
+/// `src_image_stride` and `dst_image_stride` are the per-image byte
+/// offsets between successive images in the contiguous batch buffers.
+/// Use `gridDim.z = batch_size`.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn srgb_to_linear_batch_kernel(
+    src: *const u8,
+    src_pitch: usize,
+    src_image_stride: usize,
+    dst: *mut f32,
+    dst_pitch: usize,
+    dst_image_stride: usize,
+    width: usize,
+    height: usize,
+) {
+    let x = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let y = core::arch::nvptx::_block_idx_y() as usize
+        * core::arch::nvptx::_block_dim_y() as usize
+        + core::arch::nvptx::_thread_idx_y() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+
+    if x >= width * 3 || y >= height {
+        return;
+    }
+
+    let src_img = src.byte_add(b * src_image_stride);
+    let dst_img = dst.byte_add(b * dst_image_stride);
+    let src_row = src_img.byte_add(y * src_pitch);
+    let dst_row = dst_img.byte_add(y * dst_pitch) as *mut f32;
+
+    let val = *src_row.add(x) as f32 / 255.0;
+    *dst_row.add(x) = srgb_to_linear(val);
+}
+
 /// Opsin dynamics image transformation
 /// Takes linear RGB and blurred linear RGB, produces XYB output
 ///
@@ -183,6 +221,56 @@ pub unsafe extern "ptx-kernel" fn opsin_dynamics_kernel(
     *src_b.add(idx) = sz;
 }
 
+/// Batched opsin dynamics. Each plane pointer addresses N contiguous
+/// planes of `plane_stride` f32 elements each. Grid is launched with
+/// gridDim.x = (plane_stride + 255) / 256, gridDim.z = batch_size.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn opsin_dynamics_batch_kernel(
+    src_r: *mut f32,
+    src_g: *mut f32,
+    src_b: *mut f32,
+    blur_r: *const f32,
+    blur_g: *const f32,
+    blur_b: *const f32,
+    plane_stride: usize, // = width * height
+    intensity_multiplier: f32,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    if idx >= plane_stride {
+        return;
+    }
+    let off = b * plane_stride;
+
+    let r = *src_r.add(off + idx) * intensity_multiplier;
+    let g = *src_g.add(off + idx) * intensity_multiplier;
+    let bv = *src_b.add(off + idx) * intensity_multiplier;
+    let blur_r_val = *blur_r.add(off + idx) * intensity_multiplier;
+    let blur_g_val = *blur_g.add(off + idx) * intensity_multiplier;
+    let blur_b_val = *blur_b.add(off + idx) * intensity_multiplier;
+
+    let (bx, by, bz) = opsin_absorbance(blur_r_val, blur_g_val, blur_b_val, true);
+    let bx = bx.max(1e-4);
+    let by = by.max(1e-4);
+    let bz = bz.max(1e-4);
+    let sens_x = (gamma(bx) / bx).max(1e-4);
+    let sens_y = (gamma(by) / by).max(1e-4);
+    let sens_z = (gamma(bz) / bz).max(1e-4);
+
+    let (mut sx, mut sy, mut sz) = opsin_absorbance(r, g, bv, false);
+    sx *= sens_x;
+    sy *= sens_y;
+    sz *= sens_z;
+    sx = sx.max(consts::OPSIN_BIAS_X);
+    sy = sy.max(consts::OPSIN_BIAS_Y);
+    sz = sz.max(consts::OPSIN_BIAS_B);
+    *src_r.add(off + idx) = sx - sy;
+    *src_g.add(off + idx) = sx + sy;
+    *src_b.add(off + idx) = sz;
+}
+
 /// Deinterleave 3-channel image: RGB packed to R, G, B planes
 /// Input: RGBRGBRGB... Output: RRR..., GGG..., BBB...
 #[unsafe(no_mangle)]
@@ -212,6 +300,40 @@ pub unsafe extern "ptx-kernel" fn deinterleave_3ch_kernel(
     *dst0.add(idx) = *src_row.add(x * 3);
     *dst1.add(idx) = *src_row.add(x * 3 + 1);
     *dst2.add(idx) = *src_row.add(x * 3 + 2);
+}
+
+/// Batched deinterleave. Source: N contiguous packed-f32 RGB images.
+/// Destinations: N contiguous planar chunks per channel. gridDim.z is
+/// the batch index; each plane_stride is width*height f32 elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn deinterleave_3ch_batch_kernel(
+    src: *const f32,
+    src_pitch: usize,
+    src_image_stride: usize, // bytes per image in src
+    dst0: *mut f32,
+    dst1: *mut f32,
+    dst2: *mut f32,
+    plane_stride: usize, // f32 elements per image per plane (= width*height)
+    width: usize,
+    height: usize,
+) {
+    let x = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let y = core::arch::nvptx::_block_idx_y() as usize
+        * core::arch::nvptx::_block_dim_y() as usize
+        + core::arch::nvptx::_thread_idx_y() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    if x >= width || y >= height {
+        return;
+    }
+    let src_img = (src as *const u8).add(b * src_image_stride) as *const f32;
+    let src_row = (src_img as *const u8).add(y * src_pitch) as *const f32;
+    let idx = y * width + x;
+    let off = b * plane_stride;
+    *dst0.add(off + idx) = *src_row.add(x * 3);
+    *dst1.add(off + idx) = *src_row.add(x * 3 + 1);
+    *dst2.add(off + idx) = *src_row.add(x * 3 + 2);
 }
 
 /// Convert interleaved linear RGB to planar XYB (without opsin dynamics blur)

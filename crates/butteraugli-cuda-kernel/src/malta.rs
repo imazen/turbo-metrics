@@ -535,6 +535,63 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_kernel(
     *block_diff_ac.add(out_idx) += result;
 }
 
+/// Batched malta_diff_map. gridDim.z selects the image; lum0/lum1/
+/// block_diff_ac are concatenated N-image buffers with `plane_stride`
+/// f32 elements per image.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn malta_diff_map_batch_kernel(
+    lum0: *const f32,
+    lum1: *const f32,
+    block_diff_ac: *mut f32,
+    width: usize,
+    height: usize,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
+    norm1: f32,
+    plane_stride: usize,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    let tx = core::arch::nvptx::_thread_idx_x() as usize;
+    let ty = core::arch::nvptx::_thread_idx_y() as usize;
+    let bx = core::arch::nvptx::_block_idx_x() as usize;
+    let by = core::arch::nvptx::_block_idx_y() as usize;
+
+    let x = bx * TILE_SIZE + tx;
+    let y = by * TILE_SIZE + ty;
+
+    let lum0 = lum0.add(b * plane_stride);
+    let lum1 = lum1.add(b * plane_stride);
+    let out = block_diff_ac.add(b * plane_stride);
+
+    let topleftx = (bx * TILE_SIZE) as isize - HALO as isize;
+    let toplefty = (by * TILE_SIZE) as isize - HALO as isize;
+    let serial_idx = tx + ty * TILE_SIZE;
+    let serial_stride = TILE_SIZE * TILE_SIZE;
+
+    let mut i = serial_idx;
+    while i < SHARED_TOTAL {
+        let work_x = topleftx + (i % SHARED_SIZE) as isize;
+        let work_y = toplefty + (i / SHARED_SIZE) as isize;
+        if work_x < 0 || work_x >= width as isize || work_y < 0 || work_y >= height as isize {
+            *MALTA_DIFFS.as_mut_ptr().add(i) = 0.0;
+        } else {
+            let global_idx = work_y as usize * width + work_x as usize;
+            let l0 = *lum0.add(global_idx);
+            let l1 = *lum1.add(global_idx);
+            *MALTA_DIFFS.as_mut_ptr().add(i) = compute_diff(l0, l1, norm1, norm2_0gt1, norm2_0lt1);
+        }
+        i += serial_stride;
+    }
+    core::arch::nvptx::_syncthreads();
+    if x >= width || y >= height {
+        return;
+    }
+    let shared_pos = (ty + HALO) * SHARED_SIZE + (tx + HALO);
+    let result = malta_unit(MALTA_DIFFS.as_ptr().add(shared_pos), SHARED_SIZE as isize);
+    let out_idx = y * width + x;
+    *out.add(out_idx) += result;
+}
+
 /// Malta difference map kernel (low frequency version)
 ///
 /// Parameters norm2_0gt1 and norm2_0lt1 should be pre-computed on host with f64 precision:
@@ -609,4 +666,62 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_kernel(
     // Add to output (accumulate)
     let out_idx = y * width + x;
     *block_diff_ac.add(out_idx) += result;
+}
+
+/// Batched Malta LF diff map.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_batch_kernel(
+    lum0: *const f32,
+    lum1: *const f32,
+    block_diff_ac: *mut f32,
+    width: usize,
+    height: usize,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
+    norm1: f32,
+    plane_stride: usize,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    let tx = core::arch::nvptx::_thread_idx_x() as usize;
+    let ty = core::arch::nvptx::_thread_idx_y() as usize;
+    let bx = core::arch::nvptx::_block_idx_x() as usize;
+    let by = core::arch::nvptx::_block_idx_y() as usize;
+
+    let x = bx * TILE_SIZE + tx;
+    let y = by * TILE_SIZE + ty;
+
+    let lum0 = lum0.add(b * plane_stride);
+    let lum1 = lum1.add(b * plane_stride);
+    let out = block_diff_ac.add(b * plane_stride);
+
+    let topleftx = (bx * TILE_SIZE) as isize - HALO as isize;
+    let toplefty = (by * TILE_SIZE) as isize - HALO as isize;
+    let serial_idx = tx + ty * TILE_SIZE;
+    let serial_stride = TILE_SIZE * TILE_SIZE;
+
+    let mut i = serial_idx;
+    while i < SHARED_TOTAL {
+        let work_x = topleftx + (i % SHARED_SIZE) as isize;
+        let work_y = toplefty + (i / SHARED_SIZE) as isize;
+        if work_x < 0 || work_x >= width as isize || work_y < 0 || work_y >= height as isize {
+            *MALTA_DIFFS.as_mut_ptr().add(i) = 0.0;
+        } else {
+            let global_idx = work_y as usize * width + work_x as usize;
+            let l0 = *lum0.add(global_idx);
+            let l1 = *lum1.add(global_idx);
+            *MALTA_DIFFS.as_mut_ptr().add(i) = compute_diff(l0, l1, norm1, norm2_0gt1, norm2_0lt1);
+        }
+        i += serial_stride;
+    }
+    core::arch::nvptx::_syncthreads();
+    if x >= width || y >= height {
+        return;
+    }
+    let shared_pos = (ty + HALO) * SHARED_SIZE + (tx + HALO);
+    let result = malta_unit_lf(
+        (MALTA_DIFFS.as_ptr() as *const f32).add(shared_pos),
+        SHARED_SIZE as isize,
+    );
+    let out_idx = y * width + x;
+    *out.add(out_idx) += result;
 }

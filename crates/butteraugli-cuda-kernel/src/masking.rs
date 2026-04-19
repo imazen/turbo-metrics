@@ -203,3 +203,56 @@ pub unsafe extern "ptx-kernel" fn fuzzy_erosion_kernel(
 
     *dst.add(idx) = 0.45 * min0 + 0.3 * min1 + 0.25 * min2;
 }
+
+/// Batched fuzzy erosion. gridDim.z = batch.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn fuzzy_erosion_batch_kernel(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    plane_stride: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    if idx >= width * height {
+        return;
+    }
+    let src = src.add(b * plane_stride);
+    let dst = dst.add(b * plane_stride);
+
+    let x = idx % width;
+    let y = idx / width;
+
+    let mut min0 = *src.add(idx);
+    let mut min1 = 2.0 * min0;
+    let mut min2 = min1;
+
+    if x >= EROSION_STEP {
+        store_min3(*src.add(y * width + x - EROSION_STEP), &mut min0, &mut min1, &mut min2);
+        if y >= EROSION_STEP {
+            store_min3(*src.add((y - EROSION_STEP) * width + x - EROSION_STEP), &mut min0, &mut min1, &mut min2);
+        }
+        if y + EROSION_STEP < height {
+            store_min3(*src.add((y + EROSION_STEP) * width + x - EROSION_STEP), &mut min0, &mut min1, &mut min2);
+        }
+    }
+    if x + EROSION_STEP < width {
+        store_min3(*src.add(y * width + x + EROSION_STEP), &mut min0, &mut min1, &mut min2);
+        if y >= EROSION_STEP {
+            store_min3(*src.add((y - EROSION_STEP) * width + x + EROSION_STEP), &mut min0, &mut min1, &mut min2);
+        }
+        if y + EROSION_STEP < height {
+            store_min3(*src.add((y + EROSION_STEP) * width + x + EROSION_STEP), &mut min0, &mut min1, &mut min2);
+        }
+    }
+    if y >= EROSION_STEP {
+        store_min3(*src.add((y - EROSION_STEP) * width + x), &mut min0, &mut min1, &mut min2);
+    }
+    if y + EROSION_STEP < height {
+        store_min3(*src.add((y + EROSION_STEP) * width + x), &mut min0, &mut min1, &mut min2);
+    }
+    *dst.add(idx) = 0.45 * min0 + 0.3 * min1 + 0.25 * min2;
+}

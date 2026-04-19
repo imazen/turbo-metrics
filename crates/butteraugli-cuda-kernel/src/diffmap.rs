@@ -203,6 +203,52 @@ pub unsafe extern "ptx-kernel" fn max_reduce_f32_to_u32_kernel(
     );
 }
 
+/// Batched max reduction: one f32 result per image in `result_u32[b]`.
+/// Zero result_u32[0..batch_size] on host before launch.
+/// Grid: (16, 1, batch_size) x (256, 1, 1) threads; each block reduces
+/// a grid-strided slice of image `b`.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn max_reduce_f32_to_u32_batch_kernel(
+    src: *const f32,
+    result_u32: *mut u32,
+    size: usize,         // per-image element count
+    plane_stride: usize, // f32 elements per image (usually == size)
+) {
+    let tid_in_z = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let stride = core::arch::nvptx::_grid_dim_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+
+    let src_b = src.add(b * plane_stride);
+
+    let mut local: u32 = 0;
+    let mut i = tid_in_z;
+    while i < size {
+        let v = *src_b.add(i);
+        let bits = v.to_bits();
+        if bits > local {
+            local = bits;
+        }
+        i += stride;
+    }
+
+    if local == 0 {
+        return;
+    }
+
+    let target = result_u32.add(b);
+    let mut _discard: u32;
+    core::arch::asm!(
+        "atom.global.max.u32 {d}, [{p}], {v};",
+        d = out(reg32) _discard,
+        p = in(reg64) target,
+        v = in(reg32) local,
+        options(nostack, preserves_flags),
+    );
+}
+
 /// Compute x^q for each element (for norm calculation)
 /// The actual reduction/sum will be done on host side using NPP
 #[unsafe(no_mangle)]

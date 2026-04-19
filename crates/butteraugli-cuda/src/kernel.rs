@@ -47,6 +47,23 @@ pub struct Kernel {
     l2_asym_diff: CuFunction,
     power_elements: CuFunction,
     max_reduce_f32_to_u32: CuFunction,
+    // Batched variants (tracked in coefficient#13). Kernels whose
+    // single-image version is already 1D size-indexed (e.g. opsin,
+    // l2_diff, subtract_arrays) don't need a batch variant — callers
+    // can feed them a concatenated N-image buffer and size = N * plane.
+    srgb_to_linear_batch: CuFunction,
+    deinterleave_3ch_batch: CuFunction,
+    opsin_dynamics_batch: CuFunction,
+    horizontal_blur_batch: CuFunction,
+    vertical_blur_batch: CuFunction,
+    blur_mirrored_5x5_h_batch: CuFunction,
+    blur_mirrored_5x5_v_batch: CuFunction,
+    downsample_2x_batch: CuFunction,
+    add_upsample_2x_batch: CuFunction,
+    malta_diff_map_batch: CuFunction,
+    malta_diff_map_lf_batch: CuFunction,
+    fuzzy_erosion_batch: CuFunction,
+    max_reduce_f32_to_u32_batch: CuFunction,
 }
 
 impl Kernel {
@@ -152,6 +169,45 @@ impl Kernel {
             max_reduce_f32_to_u32: module
                 .function_by_name("max_reduce_f32_to_u32_kernel")
                 .expect("max_reduce_f32_to_u32_kernel not found"),
+            srgb_to_linear_batch: module
+                .function_by_name("srgb_to_linear_batch_kernel")
+                .expect("srgb_to_linear_batch_kernel not found"),
+            deinterleave_3ch_batch: module
+                .function_by_name("deinterleave_3ch_batch_kernel")
+                .expect("deinterleave_3ch_batch_kernel not found"),
+            opsin_dynamics_batch: module
+                .function_by_name("opsin_dynamics_batch_kernel")
+                .expect("opsin_dynamics_batch_kernel not found"),
+            horizontal_blur_batch: module
+                .function_by_name("horizontal_blur_batch_kernel")
+                .expect("horizontal_blur_batch_kernel not found"),
+            vertical_blur_batch: module
+                .function_by_name("vertical_blur_batch_kernel")
+                .expect("vertical_blur_batch_kernel not found"),
+            blur_mirrored_5x5_h_batch: module
+                .function_by_name("blur_mirrored_5x5_horizontal_batch_kernel")
+                .expect("blur_mirrored_5x5_horizontal_batch_kernel not found"),
+            blur_mirrored_5x5_v_batch: module
+                .function_by_name("blur_mirrored_5x5_vertical_batch_kernel")
+                .expect("blur_mirrored_5x5_vertical_batch_kernel not found"),
+            downsample_2x_batch: module
+                .function_by_name("downsample_2x_batch_kernel")
+                .expect("downsample_2x_batch_kernel not found"),
+            add_upsample_2x_batch: module
+                .function_by_name("add_upsample_2x_batch_kernel")
+                .expect("add_upsample_2x_batch_kernel not found"),
+            malta_diff_map_batch: module
+                .function_by_name("malta_diff_map_batch_kernel")
+                .expect("malta_diff_map_batch_kernel not found"),
+            malta_diff_map_lf_batch: module
+                .function_by_name("malta_diff_map_lf_batch_kernel")
+                .expect("malta_diff_map_lf_batch_kernel not found"),
+            fuzzy_erosion_batch: module
+                .function_by_name("fuzzy_erosion_batch_kernel")
+                .expect("fuzzy_erosion_batch_kernel not found"),
+            max_reduce_f32_to_u32_batch: module
+                .function_by_name("max_reduce_f32_to_u32_batch_kernel")
+                .expect("max_reduce_f32_to_u32_batch_kernel not found"),
             _module: module,
         }
     }
@@ -933,6 +989,419 @@ impl Kernel {
             cudarse_driver::sys::cuMemsetD32Async(dst as u64, 0, size, stream.raw())
                 .result()
                 .expect("clear_buffer failed");
+        }
+    }
+
+    // ============================================================
+    // Batched kernel wrappers (coefficient#13)
+    // ============================================================
+
+    fn batch_config_1d(size: usize, batch: u32) -> LaunchConfig {
+        const THREADS: u32 = 256;
+        let blocks = ((size as u32) + THREADS - 1) / THREADS;
+        LaunchConfig {
+            grid_dim: (blocks, 1, batch),
+            block_dim: (THREADS, 1, 1),
+            shared_mem_bytes: 0,
+        }
+    }
+
+    fn batch_config_2d(width: u32, height: u32, batch: u32) -> LaunchConfig {
+        const TX: u32 = 32;
+        const TY: u32 = 8;
+        let bx = (width + TX - 1) / TX;
+        let by = (height + TY - 1) / TY;
+        LaunchConfig {
+            grid_dim: (bx, by, batch),
+            block_dim: (TX, TY, 1),
+            shared_mem_bytes: 0,
+        }
+    }
+
+    fn batch_config_malta(width: u32, height: u32, batch: u32) -> LaunchConfig {
+        const TILE: u32 = 16;
+        let bx = (width + TILE - 1) / TILE;
+        let by = (height + TILE - 1) / TILE;
+        LaunchConfig {
+            grid_dim: (bx, by, batch),
+            block_dim: (TILE, TILE, 1),
+            shared_mem_bytes: 24 * 24 * 4,
+        }
+    }
+
+    /// Batched sRGB -> linear. Inputs are packed `Image<u8, C<3>>` views
+    /// but we take pointers directly because the batch layout is a simple
+    /// concatenation of N packed-RGB images.
+    pub fn srgb_to_linear_batch(
+        &self,
+        stream: &CuStream,
+        src: *const u8,
+        src_pitch: usize,
+        src_image_stride: usize,
+        dst: *mut f32,
+        dst_pitch: usize,
+        dst_image_stride: usize,
+        width: u32,
+        height: u32,
+        batch: u32,
+    ) {
+        unsafe {
+            self.srgb_to_linear_batch
+                .launch(
+                    &Self::batch_config_2d(width * 3, height, batch),
+                    stream,
+                    kernel_params!(
+                        src,
+                        src_pitch,
+                        src_image_stride,
+                        dst,
+                        dst_pitch,
+                        dst_image_stride,
+                        width as usize,
+                        height as usize,
+                    ),
+                )
+                .expect("srgb_to_linear_batch launch failed");
+        }
+    }
+
+    /// Batched deinterleave. Plane outputs are N contiguous `plane_stride`
+    /// chunks per channel.
+    pub fn deinterleave_3ch_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        src_pitch: usize,
+        src_image_stride: usize,
+        dst0: *mut f32,
+        dst1: *mut f32,
+        dst2: *mut f32,
+        plane_stride: usize,
+        width: u32,
+        height: u32,
+        batch: u32,
+    ) {
+        unsafe {
+            self.deinterleave_3ch_batch
+                .launch(
+                    &Self::batch_config_2d(width, height, batch),
+                    stream,
+                    kernel_params!(
+                        src,
+                        src_pitch,
+                        src_image_stride,
+                        dst0,
+                        dst1,
+                        dst2,
+                        plane_stride,
+                        width as usize,
+                        height as usize,
+                    ),
+                )
+                .expect("deinterleave_3ch_batch launch failed");
+        }
+    }
+
+    /// Batched opsin dynamics. Each pointer addresses N concatenated
+    /// planes of `plane_stride` f32 each.
+    pub fn opsin_dynamics_batch(
+        &self,
+        stream: &CuStream,
+        src_r: *mut f32,
+        src_g: *mut f32,
+        src_b: *mut f32,
+        blur_r: *const f32,
+        blur_g: *const f32,
+        blur_b: *const f32,
+        plane_stride: usize,
+        intensity: f32,
+        batch: u32,
+    ) {
+        unsafe {
+            self.opsin_dynamics_batch
+                .launch(
+                    &Self::batch_config_1d(plane_stride, batch),
+                    stream,
+                    kernel_params!(
+                        src_r, src_g, src_b, blur_r, blur_g, blur_b, plane_stride, intensity,
+                    ),
+                )
+                .expect("opsin_dynamics_batch launch failed");
+        }
+    }
+
+    /// Batched separable Gaussian blur (two-pass, same on-the-fly
+    /// weights as the unbatched path).
+    pub fn blur_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        temp: *mut f32,
+        width: usize,
+        height: usize,
+        sigma: f32,
+        plane_stride: usize,
+        batch: u32,
+    ) {
+        // Horizontal pass: src -> temp
+        unsafe {
+            self.horizontal_blur_batch
+                .launch(
+                    &Self::batch_config_1d(width * height, batch),
+                    stream,
+                    kernel_params!(src, temp, width, height, sigma, plane_stride,),
+                )
+                .expect("horizontal_blur_batch launch failed");
+            self.vertical_blur_batch
+                .launch(
+                    &Self::batch_config_1d(width * height, batch),
+                    stream,
+                    kernel_params!(temp, dst, width, height, sigma, plane_stride,),
+                )
+                .expect("vertical_blur_batch launch failed");
+        }
+    }
+
+    /// Batched 5x5 mirrored blur (the σ=1.2 opsin blur).
+    pub fn blur_mirrored_5x5_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        temp: *mut f32,
+        width: usize,
+        height: usize,
+        w0: f32,
+        w1: f32,
+        w2: f32,
+        plane_stride: usize,
+        batch: u32,
+    ) {
+        unsafe {
+            self.blur_mirrored_5x5_h_batch
+                .launch(
+                    &Self::batch_config_1d(width * height, batch),
+                    stream,
+                    kernel_params!(src, temp, width, height, w0, w1, w2, plane_stride,),
+                )
+                .expect("blur_mirrored_5x5_h_batch launch failed");
+            self.blur_mirrored_5x5_v_batch
+                .launch(
+                    &Self::batch_config_1d(width * height, batch),
+                    stream,
+                    kernel_params!(temp, dst, width, height, w0, w1, w2, plane_stride,),
+                )
+                .expect("blur_mirrored_5x5_v_batch launch failed");
+        }
+    }
+
+    pub fn downsample_2x_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        src_width: usize,
+        src_height: usize,
+        dst_width: usize,
+        dst_height: usize,
+        src_plane_stride: usize,
+        dst_plane_stride: usize,
+        batch: u32,
+    ) {
+        unsafe {
+            self.downsample_2x_batch
+                .launch(
+                    &Self::batch_config_2d(dst_width as u32, dst_height as u32, batch),
+                    stream,
+                    kernel_params!(
+                        src,
+                        dst,
+                        src_width,
+                        src_height,
+                        dst_width,
+                        dst_height,
+                        src_plane_stride,
+                        dst_plane_stride,
+                    ),
+                )
+                .expect("downsample_2x_batch launch failed");
+        }
+    }
+
+    pub fn add_upsample_2x_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        src_width: usize,
+        src_height: usize,
+        dst_width: usize,
+        dst_height: usize,
+        src_plane_stride: usize,
+        dst_plane_stride: usize,
+        scale: f32,
+        batch: u32,
+    ) {
+        unsafe {
+            self.add_upsample_2x_batch
+                .launch(
+                    &Self::batch_config_2d(dst_width as u32, dst_height as u32, batch),
+                    stream,
+                    kernel_params!(
+                        dst,
+                        src,
+                        dst_width,
+                        dst_height,
+                        src_width,
+                        src_height,
+                        src_plane_stride,
+                        dst_plane_stride,
+                        scale,
+                    ),
+                )
+                .expect("add_upsample_2x_batch launch failed");
+        }
+    }
+
+    pub fn malta_diff_map_batch(
+        &self,
+        stream: &CuStream,
+        lum0: *const f32,
+        lum1: *const f32,
+        block_diff_ac: *mut f32,
+        width: usize,
+        height: usize,
+        w_0gt1: f32,
+        w_0lt1: f32,
+        norm1: f32,
+        plane_stride: usize,
+        batch: u32,
+    ) {
+        const MULLI_HF: f64 = 0.39905817637;
+        const K_WEIGHT0: f64 = 0.5;
+        const K_WEIGHT1: f64 = 0.33;
+        const LEN2: f64 = 3.75 * 2.0 + 1.0;
+        let norm2_0gt1 =
+            (MULLI_HF * (K_WEIGHT0 * w_0gt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        let norm2_0lt1 =
+            (MULLI_HF * (K_WEIGHT1 * w_0lt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        unsafe {
+            self.malta_diff_map_batch
+                .launch(
+                    &Self::batch_config_malta(width as u32, height as u32, batch),
+                    stream,
+                    kernel_params!(
+                        lum0,
+                        lum1,
+                        block_diff_ac,
+                        width,
+                        height,
+                        norm2_0gt1,
+                        norm2_0lt1,
+                        norm1,
+                        plane_stride,
+                    ),
+                )
+                .expect("malta_diff_map_batch launch failed");
+        }
+    }
+
+    pub fn malta_diff_map_lf_batch(
+        &self,
+        stream: &CuStream,
+        lum0: *const f32,
+        lum1: *const f32,
+        block_diff_ac: *mut f32,
+        width: usize,
+        height: usize,
+        w_0gt1: f32,
+        w_0lt1: f32,
+        norm1: f32,
+        plane_stride: usize,
+        batch: u32,
+    ) {
+        const MULLI_LF: f64 = 0.611612573796;
+        const K_WEIGHT0: f64 = 0.5;
+        const K_WEIGHT1: f64 = 0.33;
+        const LEN2: f64 = 3.75 * 2.0 + 1.0;
+        let norm2_0gt1 =
+            (MULLI_LF * (K_WEIGHT0 * w_0gt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        let norm2_0lt1 =
+            (MULLI_LF * (K_WEIGHT1 * w_0lt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        unsafe {
+            self.malta_diff_map_lf_batch
+                .launch(
+                    &Self::batch_config_malta(width as u32, height as u32, batch),
+                    stream,
+                    kernel_params!(
+                        lum0,
+                        lum1,
+                        block_diff_ac,
+                        width,
+                        height,
+                        norm2_0gt1,
+                        norm2_0lt1,
+                        norm1,
+                        plane_stride,
+                    ),
+                )
+                .expect("malta_diff_map_lf_batch launch failed");
+        }
+    }
+
+    pub fn fuzzy_erosion_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        width: usize,
+        height: usize,
+        plane_stride: usize,
+        batch: u32,
+    ) {
+        unsafe {
+            self.fuzzy_erosion_batch
+                .launch(
+                    &Self::batch_config_1d(width * height, batch),
+                    stream,
+                    kernel_params!(src, dst, width, height, plane_stride,),
+                )
+                .expect("fuzzy_erosion_batch launch failed");
+        }
+    }
+
+    /// Batched max reduction. Produces one u32 (float bits) per image in
+    /// `result[0..batch]`. Caller must zero the result slots first.
+    pub fn max_reduce_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        result: *mut f32,
+        size: usize,
+        plane_stride: usize,
+        batch: u32,
+    ) {
+        unsafe {
+            cudarse_driver::sys::cuMemsetD32Async(result as u64, 0, batch as usize, stream.raw())
+                .result()
+                .expect("max_reduce_batch clear failed");
+        }
+        const THREADS: u32 = 256;
+        const BLOCKS: u32 = 16;
+        let cfg = LaunchConfig {
+            grid_dim: (BLOCKS, 1, batch),
+            block_dim: (THREADS, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        unsafe {
+            self.max_reduce_f32_to_u32_batch
+                .launch(
+                    &cfg,
+                    stream,
+                    kernel_params!(src, result as *mut u32, size, plane_stride,),
+                )
+                .expect("max_reduce_batch launch failed");
         }
     }
 

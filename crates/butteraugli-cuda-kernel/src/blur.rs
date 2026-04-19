@@ -30,13 +30,46 @@ pub unsafe extern "ptx-kernel" fn horizontal_blur_kernel(
     height: usize,
     sigma: f32,
 ) {
-    let idx = (core::arch::nvptx::_block_idx_x() as usize
+    // Delegate to the batched kernel with plane_stride=width*height and b=0.
+    horizontal_blur_batch_impl(src, dst, width, height, sigma, 0, width * height);
+}
+
+/// Batched horizontal blur. Pairs with vertical_blur_batch_kernel.
+/// Launch with grid.x = ceil((width*height) / THREADS), grid.z = N;
+/// each image's plane is `plane_stride` f32 elements long.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn horizontal_blur_batch_kernel(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    sigma: f32,
+    plane_stride: usize,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    horizontal_blur_batch_impl(src, dst, width, height, sigma, b, plane_stride);
+}
+
+#[inline(always)]
+unsafe fn horizontal_blur_batch_impl(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    sigma: f32,
+    b: usize,
+    plane_stride: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
-        + core::arch::nvptx::_thread_idx_x() as usize);
+        + core::arch::nvptx::_thread_idx_x() as usize;
 
     if idx >= width * height {
         return;
     }
+
+    let src = src.add(b * plane_stride);
+    let dst = dst.add(b * plane_stride);
 
     let row = idx / width;
     let x = idx % width;
@@ -77,13 +110,43 @@ pub unsafe extern "ptx-kernel" fn vertical_blur_kernel(
     height: usize,
     sigma: f32,
 ) {
-    let idx = (core::arch::nvptx::_block_idx_x() as usize
+    vertical_blur_batch_impl(src, dst, width, height, sigma, 0, width * height);
+}
+
+/// Batched vertical blur. Paired with horizontal_blur_batch_kernel.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn vertical_blur_batch_kernel(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    sigma: f32,
+    plane_stride: usize,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    vertical_blur_batch_impl(src, dst, width, height, sigma, b, plane_stride);
+}
+
+#[inline(always)]
+unsafe fn vertical_blur_batch_impl(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    sigma: f32,
+    b: usize,
+    plane_stride: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
-        + core::arch::nvptx::_thread_idx_x() as usize);
+        + core::arch::nvptx::_thread_idx_x() as usize;
 
     if idx >= width * height {
         return;
     }
+
+    let src = src.add(b * plane_stride);
+    let dst = dst.add(b * plane_stride);
 
     let y = idx / width;
     let x = idx % width;
@@ -164,13 +227,47 @@ pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_horizontal_kernel(
     w1: f32, // 1-pixel offset weight
     w2: f32, // 2-pixel offset weight
 ) {
-    let idx = (core::arch::nvptx::_block_idx_x() as usize
+    blur_mirrored_5x5_h_impl(src, dst, width, height, w0, w1, w2, 0, width * height);
+}
+
+/// Batched horizontal pass of 5x5 mirrored blur. gridDim.z = batch.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_horizontal_batch_kernel(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    w0: f32,
+    w1: f32,
+    w2: f32,
+    plane_stride: usize,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    blur_mirrored_5x5_h_impl(src, dst, width, height, w0, w1, w2, b, plane_stride);
+}
+
+#[inline(always)]
+unsafe fn blur_mirrored_5x5_h_impl(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    w0: f32,
+    w1: f32,
+    w2: f32,
+    b: usize,
+    plane_stride: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
-        + core::arch::nvptx::_thread_idx_x() as usize);
+        + core::arch::nvptx::_thread_idx_x() as usize;
 
     if idx >= width * height {
         return;
     }
+
+    let src = src.add(b * plane_stride);
+    let dst = dst.add(b * plane_stride);
 
     let y = idx / width;
     let x = idx % width;
@@ -178,7 +275,6 @@ pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_horizontal_kernel(
 
     let row = src.add(y * width);
 
-    // Sample with mirrored boundaries
     let v_m2 = *row.add(mirror(x as i32 - 2, iwidth));
     let v_m1 = *row.add(mirror(x as i32 - 1, iwidth));
     let v_0 = *row.add(x);
@@ -203,23 +299,54 @@ pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_vertical_kernel(
     w1: f32,
     w2: f32,
 ) {
-    let idx = (core::arch::nvptx::_block_idx_x() as usize
+    blur_mirrored_5x5_v_impl(src, dst, width, height, w0, w1, w2, 0, width * height);
+}
+
+/// Batched vertical pass of 5x5 mirrored blur.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_vertical_batch_kernel(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    w0: f32,
+    w1: f32,
+    w2: f32,
+    plane_stride: usize,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    blur_mirrored_5x5_v_impl(src, dst, width, height, w0, w1, w2, b, plane_stride);
+}
+
+#[inline(always)]
+unsafe fn blur_mirrored_5x5_v_impl(
+    src: *const f32,
+    dst: *mut f32,
+    width: usize,
+    height: usize,
+    w0: f32,
+    w1: f32,
+    w2: f32,
+    b: usize,
+    plane_stride: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
-        + core::arch::nvptx::_thread_idx_x() as usize);
+        + core::arch::nvptx::_thread_idx_x() as usize;
 
     if idx >= width * height {
         return;
     }
 
-    // In transposed input, iterate as if original y is column index
-    let x = idx / height; // Original x coordinate
-    let y = idx % height; // Original y coordinate
+    let src = src.add(b * plane_stride);
+    let dst = dst.add(b * plane_stride);
+
+    let x = idx / height;
+    let y = idx % height;
     let iheight = height as i32;
 
-    // In transposed buffer, column x (original) is at src[x * height + ...]
     let col = src.add(x * height);
 
-    // Sample with mirrored boundaries
     let v_m2 = *col.add(mirror(y as i32 - 2, iheight));
     let v_m1 = *col.add(mirror(y as i32 - 1, iheight));
     let v_0 = *col.add(y);
@@ -228,6 +355,5 @@ pub unsafe extern "ptx-kernel" fn blur_mirrored_5x5_vertical_kernel(
 
     let sum = v_0 * w0 + (v_m1 + v_p1) * w1 + (v_m2 + v_p2) * w2;
 
-    // Write in original orientation
     *dst.add(y * width + x) = sum;
 }
