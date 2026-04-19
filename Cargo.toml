@@ -21,6 +21,8 @@ members = [
     "crates/quick-stats",
     "crates/ssimulacra2-cuda",
     "crates/ssimulacra2-cuda-kernel",
+    "crates/zensim-cuda",
+    "crates/zensim-cuda-kernel",
     "crates/turbo-metrics",
     "crates/turbo-metrics-cli",
     "crates/vmaf",

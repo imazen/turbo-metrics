@@ -2182,6 +2182,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "zensim-cuda"
+version = "0.1.0"
+dependencies = [
+ "cudarse-driver",
+ "cudarse-npp",
+ "nvptx-builder",
+]
+
+[[package]]
+name = "zensim-cuda-kernel"
+version = "0.1.0"
+dependencies = [
+ "nvptx-builder",
+ "nvptx-std",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
