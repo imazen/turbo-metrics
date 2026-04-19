@@ -225,7 +225,18 @@ pub struct Butteraugli {
 impl Butteraugli {
     /// Create a new Butteraugli instance for images of the given dimensions
     pub fn new(width: u32, height: u32) -> Result<Self, Error> {
-        let stream = CuStream::new().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+        // Use the lowest available stream priority for the internal
+        // compute stream. Butteraugli is a background metric workload;
+        // yielding to higher-priority CUDA contexts (notably the Windows
+        // display compositor on WSL2) keeps the desktop responsive
+        // during long batches. On devices without priority support CUDA
+        // silently ignores the value.
+        let stream = {
+            let range = CuStream::priority_range()
+                .map_err(|e| Error::Cuda(format!("priority_range failed: {:?}", e)))?;
+            CuStream::new_with_priority(range.least)
+                .map_err(|e| Error::Cuda(format!("{:?}", e)))?
+        };
         let kernel = Kernel::load();
 
         let width = width as usize;

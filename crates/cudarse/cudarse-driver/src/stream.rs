@@ -2,10 +2,25 @@ use cudarse_driver_sys::cuStreamIsCapturing;
 use std::ffi::c_void;
 use std::ptr::{null_mut, NonNull};
 use sys::{
-    cuStreamBeginCapture_v2, cuStreamCreate, cuStreamDestroy_v2, cuStreamEndCapture, cuStreamQuery,
-    cuStreamSynchronize, cuStreamWaitEvent, CUstreamCaptureMode_enum, CUstream_flags, CuError,
-    CuResult,
+    cuCtxGetStreamPriorityRange, cuStreamBeginCapture_v2, cuStreamCreate,
+    cuStreamCreateWithPriority, cuStreamDestroy_v2, cuStreamEndCapture, cuStreamGetPriority,
+    cuStreamQuery, cuStreamSynchronize, cuStreamWaitEvent, CUstreamCaptureMode_enum,
+    CUstream_flags, CuError, CuResult,
 };
+
+/// Stream priority as returned by [`CuStream::priority_range`].
+///
+/// CUDA stream priorities are integers where smaller is higher priority.
+/// The two common values are the highest (most-preferred) and lowest
+/// (least-preferred) priorities supported by the current context.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct StreamPriorityRange {
+    /// Least-preferred priority — use for background compute that should
+    /// yield to interactive workloads (like display compositors).
+    pub least: i32,
+    /// Most-preferred priority — use for latency-critical work.
+    pub greatest: i32,
+}
 
 use crate::{sys, CuEvent, CuGraph};
 
@@ -35,6 +50,50 @@ impl CuStream {
             cuStreamCreate(&mut stream, CUstream_flags::CU_STREAM_NON_BLOCKING as _).result()?;
         }
         Ok(Self(stream))
+    }
+
+    /// Create a new CUDA stream with an explicit priority.
+    ///
+    /// Priorities are integers where smaller is higher priority. Use
+    /// [`CuStream::priority_range`] to discover the valid range on the
+    /// current context and pass `range.least` for background compute
+    /// that should yield to higher-priority streams (including the
+    /// Windows display compositor on WSL2).
+    ///
+    /// On context types that don't support priorities, CUDA silently
+    /// ignores the value.
+    pub fn new_with_priority(priority: i32) -> CuResult<Self> {
+        let mut stream = null_mut();
+        unsafe {
+            cuStreamCreateWithPriority(
+                &mut stream,
+                CUstream_flags::CU_STREAM_NON_BLOCKING as _,
+                priority,
+            )
+            .result()?;
+        }
+        Ok(Self(stream))
+    }
+
+    /// Query the least- and greatest-preferred stream priorities
+    /// supported by the current CUDA context. The range may be a single
+    /// value on devices without priority support.
+    pub fn priority_range() -> CuResult<StreamPriorityRange> {
+        let mut least: i32 = 0;
+        let mut greatest: i32 = 0;
+        unsafe {
+            cuCtxGetStreamPriorityRange(&mut least as *mut _, &mut greatest as *mut _).result()?;
+        }
+        Ok(StreamPriorityRange { least, greatest })
+    }
+
+    /// Return the priority of this stream.
+    pub fn priority(&self) -> CuResult<i32> {
+        let mut prio: i32 = 0;
+        unsafe {
+            cuStreamGetPriority(self.0, &mut prio as *mut _).result()?;
+        }
+        Ok(prio)
     }
 
     pub fn raw(&self) -> sys::CUstream {
