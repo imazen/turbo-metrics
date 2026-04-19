@@ -1,13 +1,13 @@
 use cudarse_driver::sys::CuResult;
 use cudarse_video_sys::{
-    cudaVideoCodec, cuvidCreateVideoParser, cuvidDestroyVideoParser, cuvidParseVideoData,
-    CUVIDEOFORMATEX__bindgen_ty_1, CUvideopacketflags, CUVIDEOFORMAT, CUVIDEOFORMATEX,
-    CUVIDOPERATINGPOINTINFO, CUVIDPARSERDISPINFO, CUVIDPARSERPARAMS, CUVIDPICPARAMS,
-    CUVIDSEIMESSAGEINFO, CUVIDSOURCEDATAPACKET,
+    CUVIDEOFORMAT, CUVIDEOFORMATEX, CUVIDEOFORMATEX__bindgen_ty_1, CUVIDOPERATINGPOINTINFO,
+    CUVIDPARSERDISPINFO, CUVIDPARSERPARAMS, CUVIDPICPARAMS, CUVIDSEIMESSAGEINFO,
+    CUVIDSOURCEDATAPACKET, CUvideopacketflags, cudaVideoCodec, cuvidCreateVideoParser,
+    cuvidDestroyVideoParser, cuvidParseVideoData,
 };
 use std::ffi::{c_ulong, c_void};
 use std::ops::Deref;
-use std::ptr::{null, null_mut, NonNull};
+use std::ptr::{NonNull, null, null_mut};
 
 pub trait CuvidParserCallbacks {
     /// Called when a new sequence is being parsed (parameters change)

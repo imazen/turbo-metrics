@@ -4,7 +4,7 @@ use crate::sys::*;
 
 use crate::Result;
 
-use super::{Channels, Img, ImgMut, Sample, C, P};
+use super::{C, Channels, Img, ImgMut, P, Sample};
 
 pub trait GammaFwdIP<S: Sample, C: Channels> {
     /// Forward gamma correction in place with gamma = 2.2

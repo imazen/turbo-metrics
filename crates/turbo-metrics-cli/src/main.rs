@@ -4,14 +4,14 @@ use indicatif::ProgressStyle;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{stdin, BufReader, Read};
+use std::io::{BufReader, Read, stdin};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 use tracing::level_filters::LevelFilter;
 use tracing::{debug, error, info, info_span, trace};
-use tracing_indicatif::span_ext::IndicatifSpanExt;
 use tracing_indicatif::IndicatifLayer;
+use tracing_indicatif::span_ext::IndicatifSpanExt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -19,7 +19,7 @@ use turbo_metrics::cudarse_driver::CuStream;
 use turbo_metrics::input_image::{ImageFrameSource, ImageProbe, PROBE_LEN};
 use turbo_metrics::input_video::{VideoFrameSource, VideoProbe};
 use turbo_metrics::npp::set_stream;
-use turbo_metrics::{init_cuda, FrameSource, MetricsResults, Options, TurboMetrics};
+use turbo_metrics::{FrameSource, MetricsResults, Options, TurboMetrics, init_cuda};
 
 mod output;
 

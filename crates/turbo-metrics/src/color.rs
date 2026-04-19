@@ -1,10 +1,10 @@
-use crate::{nvdec_to_codec, HwFrame};
+use crate::{HwFrame, nvdec_to_codec};
 use codec_bitstream::{
     ColorCharacteristics, ColourPrimaries, MatrixCoefficients, TransferCharacteristic,
 };
 use cuda_colorspace::{ColorMatrix, ColorspaceConversion, Transfer};
 use cudarse_driver::CuStream;
-use cudarse_npp::image::{ImgMut, C};
+use cudarse_npp::image::{C, ImgMut};
 use cudarse_video::dec::npp::NvDecFrame;
 use cudarse_video::sys::CUVIDEOFORMAT;
 

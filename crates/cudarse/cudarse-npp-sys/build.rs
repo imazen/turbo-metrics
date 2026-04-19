@@ -2,8 +2,8 @@ use std::env;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
-use bindgen::callbacks::{DeriveInfo, ParseCallbacks};
 use bindgen::EnumVariation;
+use bindgen::callbacks::{DeriveInfo, ParseCallbacks};
 
 fn link_lib(lib: &str) {
     if cfg!(feature = "static") {

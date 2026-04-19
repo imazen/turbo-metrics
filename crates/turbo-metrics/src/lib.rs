@@ -1,4 +1,4 @@
-use crate::color::{convert_frame_to_linearrgb, ColorRange};
+use crate::color::{ColorRange, convert_frame_to_linearrgb};
 pub use butteraugli_cuda;
 use codec_bitstream::{Codec, ColorCharacteristics};
 use cuda_colorspace::ColorspaceConversion;
@@ -7,8 +7,8 @@ use cudarse_driver::{CuDevice, CuStream};
 pub use cudarse_npp as npp;
 use cudarse_npp::image::ist::{PSNR, SSIM, WMSSSIM};
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, ImgView, C};
-use cudarse_npp::{get_stream_ctx, set_stream, ScratchBuffer};
+use cudarse_npp::image::{C, Image, Img, ImgView};
+use cudarse_npp::{ScratchBuffer, get_stream_ctx, set_stream};
 pub use cudarse_video;
 use cudarse_video::dec::npp::NvDecFrame;
 use cudarse_video::sys::cudaVideoCodec;

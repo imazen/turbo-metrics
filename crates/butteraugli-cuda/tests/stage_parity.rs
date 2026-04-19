@@ -11,11 +11,11 @@ use butteraugli::malta::malta_diff_map;
 use butteraugli::mask::{combine_channels_for_masking, compute_mask};
 use butteraugli::opsin::{opsin_dynamics_image, srgb_to_linear};
 use butteraugli::psycho::separate_frequencies;
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli::{ButteraugliParams, compute_butteraugli};
 use butteraugli_cuda::Butteraugli;
 use cudarse_driver::{CuBox, CuStream};
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, ImgMut, C};
+use cudarse_npp::image::{C, Image, Img, ImgMut};
 use cudarse_npp::set_stream;
 
 // ============================================================================

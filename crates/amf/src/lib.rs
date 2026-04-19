@@ -1,6 +1,6 @@
 pub use amf_sys as sys;
 use libloading::{Library, Symbol};
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 use std::sync::LazyLock;
 use widestring::WideCStr;
 
@@ -148,7 +148,7 @@ impl Drop for AMFComponent {
 
 #[cfg(test)]
 mod tests {
-    use crate::{runtime_version, split_version, sys, AMFFactory, Result};
+    use crate::{AMFFactory, Result, runtime_version, split_version, sys};
 
     #[test]
     fn it_works() -> Result<()> {

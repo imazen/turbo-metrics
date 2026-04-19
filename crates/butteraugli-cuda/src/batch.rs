@@ -21,11 +21,11 @@
 //! `ref_mask_final_*` written into `mask_batch` by a tiny broadcast
 //! kernel.
 
-use cudarse_driver::{sys::cuMemcpyAsync, CuBox, CuGraphExec};
+use cudarse_driver::{CuBox, CuGraphExec, sys::cuMemcpyAsync};
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, ImgMut, C};
+use cudarse_npp::image::{C, Image, Img, ImgMut};
 
-use crate::{consts, Butteraugli, Error};
+use crate::{Butteraugli, Error, consts};
 
 /// Batched butteraugli scorer. Shares a reference-state cache with an
 /// internal [`Butteraugli`] instance; the per-distorted buffers are
@@ -96,9 +96,8 @@ impl ButteraugliBatch {
 
         let dis_staging: Image<u8, C<3>> = Image::malloc(width, height * batch_size as u32)
             .map_err(|e| Error::Npp(format!("{:?}", e)))?;
-        let linear2_batch: Image<f32, C<3>> =
-            Image::malloc(width, height * batch_size as u32)
-                .map_err(|e| Error::Npp(format!("{:?}", e)))?;
+        let linear2_batch: Image<f32, C<3>> = Image::malloc(width, height * batch_size as u32)
+            .map_err(|e| Error::Npp(format!("{:?}", e)))?;
 
         let xyb2_batch = three(plane)?;
         let linear_blur2_batch = three(plane)?;
@@ -560,7 +559,17 @@ impl ButteraugliBatch {
             let src = Self::cptr(&self.xyb2_batch[ch]);
             let lf_ptr = Self::mptr(&self.freq2_batch[3][ch]);
             let temp1 = Self::mptr(&self.temp1_batch);
-            k.blur_batch(stream, src, lf_ptr, temp1, w, h, consts::SIGMA_LF, plane, batch);
+            k.blur_batch(
+                stream,
+                src,
+                lf_ptr,
+                temp1,
+                w,
+                h,
+                consts::SIGMA_LF,
+                plane,
+                batch,
+            );
 
             let mf_ptr = Self::mptr(&self.freq2_batch[2][ch]);
             k.subtract_arrays(stream, src, lf_ptr as *const f32, mf_ptr, size);
@@ -876,12 +885,54 @@ impl ButteraugliBatch {
                 consts::WMUL[1] * consts::HF_ASYMMETRY,
                 consts::WMUL[1] / consts::HF_ASYMMETRY,
             );
-            k.l2_diff(stream, ref_ptr(2, 0), dis_2_0, out_ac_0, plane, consts::WMUL[3]);
-            k.l2_diff(stream, ref_ptr(2, 1), dis_2_1, out_ac_1, plane, consts::WMUL[4]);
-            k.l2_diff(stream, ref_ptr(2, 2), dis_2_2, out_ac_2, plane, consts::WMUL[5]);
-            k.l2_diff(stream, ref_ptr(3, 0), dis_3_0, out_dc_0, plane, consts::WMUL[6]);
-            k.l2_diff(stream, ref_ptr(3, 1), dis_3_1, out_dc_1, plane, consts::WMUL[7]);
-            k.l2_diff(stream, ref_ptr(3, 2), dis_3_2, out_dc_2, plane, consts::WMUL[8]);
+            k.l2_diff(
+                stream,
+                ref_ptr(2, 0),
+                dis_2_0,
+                out_ac_0,
+                plane,
+                consts::WMUL[3],
+            );
+            k.l2_diff(
+                stream,
+                ref_ptr(2, 1),
+                dis_2_1,
+                out_ac_1,
+                plane,
+                consts::WMUL[4],
+            );
+            k.l2_diff(
+                stream,
+                ref_ptr(2, 2),
+                dis_2_2,
+                out_ac_2,
+                plane,
+                consts::WMUL[5],
+            );
+            k.l2_diff(
+                stream,
+                ref_ptr(3, 0),
+                dis_3_0,
+                out_dc_0,
+                plane,
+                consts::WMUL[6],
+            );
+            k.l2_diff(
+                stream,
+                ref_ptr(3, 1),
+                dis_3_1,
+                out_dc_1,
+                plane,
+                consts::WMUL[7],
+            );
+            k.l2_diff(
+                stream,
+                ref_ptr(3, 2),
+                dis_3_2,
+                out_dc_2,
+                plane,
+                consts::WMUL[8],
+            );
         }
 
         Ok(())

@@ -5,9 +5,9 @@ use cudarse_npp::image::ial::{Mul, Sqr, SqrIP};
 use cudarse_npp::image::idei::Transpose;
 use cudarse_npp::image::ist::Sum;
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, ImgMut, C};
+use cudarse_npp::image::{C, Image, Img, ImgMut};
 use cudarse_npp::sys::{NppStreamContext, NppiRect, Result};
-use cudarse_npp::{assert_same_size, get_stream_ctx, ScratchBuffer};
+use cudarse_npp::{ScratchBuffer, assert_same_size, get_stream_ctx};
 
 use crate::kernel::Kernel;
 

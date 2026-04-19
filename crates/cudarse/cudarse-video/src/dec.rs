@@ -7,7 +7,7 @@ use sys::cudaVideoSurfaceFormat::*;
 use std::ffi::{c_int, c_short, c_ulong, c_void};
 use std::marker::PhantomData;
 use std::mem;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 use tracing::debug;
 
 /// The video context lock is required when decoding with CUDA instead of the video engines.

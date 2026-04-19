@@ -1,9 +1,9 @@
-use crate::dec::{query_caps, select_output_format, CuVideoCtxLock, CuVideoDecoder, FrameMapping};
+use crate::dec::{CuVideoCtxLock, CuVideoDecoder, FrameMapping, query_caps, select_output_format};
 use crate::parser::CuvidParserCallbacks;
-use cudarse_driver::sys::CuResult;
 use cudarse_driver::CuStream;
+use cudarse_driver::sys::CuResult;
 use cudarse_video_sys::{
-    cudaVideoSurfaceFormat, CUVIDEOFORMAT, CUVIDPARSERDISPINFO, CUVIDPICPARAMS, CUVIDSEIMESSAGEINFO,
+    CUVIDEOFORMAT, CUVIDPARSERDISPINFO, CUVIDPICPARAMS, CUVIDSEIMESSAGEINFO, cudaVideoSurfaceFormat,
 };
 use std::cell::{OnceCell, RefCell, RefMut};
 use std::collections::VecDeque;
@@ -143,7 +143,9 @@ impl CuvidParserCallbacks for NvDecoderSimple<'_> {
         debug!(surfaces);
         if let Some((decoder, _, old_surface_format)) = self.decoder.get() {
             // Decoder needs to be reconfigured
-            warn!("Decoder reconfiguration is only supported for the same codec params (only size can change)");
+            warn!(
+                "Decoder reconfiguration is only supported for the same codec params (only size can change)"
+            );
             if surface_format != *old_surface_format {
                 panic!("Can't change surface format when reconfiguring");
             }
@@ -167,8 +169,7 @@ impl CuvidParserCallbacks for NvDecoderSimple<'_> {
         // TODO investigate if having a decode queue here would allow us to feed many nalus at once without fearing a 'still in decode queue' bug
         trace!(
             "decode {} ({} bytes)",
-            pic.CurrPicIdx,
-            pic.nBitstreamDataLen
+            pic.CurrPicIdx, pic.nBitstreamDataLen
         );
         if let Some((decoder, _, _)) = self.decoder.get() {
             if self
@@ -206,8 +207,7 @@ impl CuvidParserCallbacks for NvDecoderSimple<'_> {
             for msg in messages {
                 trace!(
                     "SEI {} ({} bytes)",
-                    msg.sei_message_type,
-                    msg.sei_message_size
+                    msg.sei_message_type, msg.sei_message_size
                 );
             }
         }

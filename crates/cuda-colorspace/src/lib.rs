@@ -1,7 +1,7 @@
 use crate::kernel::Kernel;
-use cudarse_driver::sys::CuResult;
 use cudarse_driver::CuStream;
-use cudarse_npp::image::{Img, ImgMut, C, P};
+use cudarse_driver::sys::CuResult;
+use cudarse_npp::image::{C, Img, ImgMut, P};
 
 pub mod kernel;
 

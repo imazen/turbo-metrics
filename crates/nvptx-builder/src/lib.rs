@@ -37,7 +37,7 @@ pub fn build_ptx_crate(package: &str, profile: &str, validate: bool) {
             || k == "CARGO_MAKEFLAGS"
             || k == "CARGO_HOME"
     }); //.collect::<Vec<_>>();
-        // Convert current stable toolchain to nightly toolchain.
+    // Convert current stable toolchain to nightly toolchain.
     let toolchain = env::var("RUSTUP_TOOLCHAIN").unwrap();
     let toolchain = toolchain.split_once('-').unwrap().1;
     //dbg!(&toolchain);
@@ -137,13 +137,15 @@ pub fn link_llvm_ir_file(file: impl AsRef<Path>) {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap())
         .join(path.file_name().unwrap())
         .with_extension("bc");
-    assert!(Command::new(rustlib().join("llvm-as"))
-        .arg("-o")
-        .arg(&out_path)
-        .arg(path)
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(rustlib().join("llvm-as"))
+            .arg("-o")
+            .arg(&out_path)
+            .arg(path)
+            .status()
+            .unwrap()
+            .success()
+    );
     println!("cargo:rustc-link-arg={}", out_path.display());
 }
 

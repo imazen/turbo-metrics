@@ -1,6 +1,6 @@
 use crate::{
-    Bitdepth, ColorRange, Limited, MatrixCoefficients, Sample, TransferCharacteristics, BT601_525,
-    BT601_625, BT709,
+    BT601_525, BT601_625, BT709, Bitdepth, ColorRange, Limited, MatrixCoefficients, Sample,
+    TransferCharacteristics,
 };
 use nvptx_std::prelude::*;
 

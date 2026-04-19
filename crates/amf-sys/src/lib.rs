@@ -4,7 +4,7 @@
 
 use std::ffi::CStr;
 pub use widestring;
-use widestring::{widecstr, WideCStr};
+use widestring::{WideCStr, widecstr};
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 

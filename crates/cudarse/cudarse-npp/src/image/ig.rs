@@ -4,7 +4,7 @@ use crate::sys::*;
 
 use crate::Result;
 
-use super::{Channels, Image, Img, ImgMut, Sample, C};
+use super::{C, Channels, Image, Img, ImgMut, Sample};
 
 pub trait Resize<S: Sample, C: Channels> {
     fn resize(
@@ -135,7 +135,7 @@ mod tests {
     use crate::get_stream_ctx;
     use crate::image::ig::Resize;
     use crate::image::isu::Malloc;
-    use crate::image::{Image, Img, C};
+    use crate::image::{C, Image, Img};
 
     #[test]
     fn resize() -> crate::Result<()> {

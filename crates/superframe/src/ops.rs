@@ -1,6 +1,6 @@
 use crate::{
-    assert_same_size, AsPlane, AsPlaneMut, HostAccessible, HostAccessibleMut, SampleStorage,
-    StaticSample,
+    AsPlane, AsPlaneMut, HostAccessible, HostAccessibleMut, SampleStorage, StaticSample,
+    assert_same_size,
 };
 use std::error::Error;
 

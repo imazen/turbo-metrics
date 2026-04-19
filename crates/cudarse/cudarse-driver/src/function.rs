@@ -1,12 +1,12 @@
 use cudarse_driver_sys::CUfunction;
-use std::ffi::{c_void, CStr};
-use std::ptr::{null, null_mut, NonNull};
+use std::ffi::{CStr, c_void};
+use std::ptr::{NonNull, null, null_mut};
 use sys::{
-    cuFuncGetName, cuFuncGetParamInfo, cuFuncIsLoaded, cuFuncLoad, cuFuncSetCacheConfig,
-    cuLaunchKernel, CuResult,
+    CuResult, cuFuncGetName, cuFuncGetParamInfo, cuFuncIsLoaded, cuFuncLoad, cuFuncSetCacheConfig,
+    cuLaunchKernel,
 };
 
-use crate::{sys, CuStream};
+use crate::{CuStream, sys};
 
 #[derive(Clone)]
 #[repr(transparent)]

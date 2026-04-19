@@ -1,7 +1,7 @@
 //! CUDA kernel wrappers for DSSIM computation
 
-use cudarse_driver::{kernel_params, CuFunction, CuModule, CuStream, LaunchConfig};
-use cudarse_npp::image::{Img, ImgMut, C};
+use cudarse_driver::{CuFunction, CuModule, CuStream, LaunchConfig, kernel_params};
+use cudarse_npp::image::{C, Img, ImgMut};
 
 /// Loaded DSSIM CUDA kernels
 pub struct Kernel {

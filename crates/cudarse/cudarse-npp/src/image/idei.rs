@@ -3,9 +3,9 @@
 use std::ops::Range;
 
 use crate::sys::*;
-use crate::{debug_assert_same_size, Result};
+use crate::{Result, debug_assert_same_size};
 
-use super::{Channels, Image, Img, ImgMut, Sample, C, P};
+use super::{C, Channels, Image, Img, ImgMut, P, Sample};
 
 pub trait Set<S: Sample, C: Channels> {
     fn set(&mut self, value: S, ctx: NppStreamContext) -> Result<()>;
@@ -325,11 +325,11 @@ impl_transpose_planar!(f32, P<3>, _32f, P3);
 
 #[cfg(test)]
 mod tests {
+    use crate::Result;
     use crate::get_stream_ctx;
     use crate::image::idei::{Convert, Scale, Set, SetMany};
     use crate::image::isu::Malloc;
-    use crate::image::{Image, C};
-    use crate::Result;
+    use crate::image::{C, Image};
     use cudarse_driver::{init_cuda_and_primary_ctx, sync_ctx};
 
     #[test]

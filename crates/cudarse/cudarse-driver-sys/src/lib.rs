@@ -3,7 +3,7 @@
 #![allow(non_snake_case)]
 
 use std::error::Error;
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 use std::fmt::{Debug, Display, Formatter};
 use std::ptr::null;
 

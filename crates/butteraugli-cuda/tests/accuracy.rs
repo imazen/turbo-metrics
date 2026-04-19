@@ -3,11 +3,11 @@
 //!
 //! Uses the same test images as dssim-cuda (symlinked from test_data/).
 
-use butteraugli::{butteraugli, ButteraugliParams};
+use butteraugli::{ButteraugliParams, butteraugli};
 use butteraugli_cuda::Butteraugli;
 use cudarse_driver::CuStream;
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, ImgMut, C};
+use cudarse_npp::image::{C, Image, Img, ImgMut};
 use cudarse_npp::set_stream;
 use imgref::ImgVec;
 use rgb::RGB8;
@@ -599,7 +599,7 @@ fn test_context_reuse_multiple_images() {
         return;
     }
 
-    let (width, height) = (all_images[0].1 .0, all_images[0].1 .1);
+    let (width, height) = (all_images[0].1.0, all_images[0].1.1);
 
     // Create GPU buffers and Butteraugli instance once
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32)
@@ -671,7 +671,11 @@ fn test_context_reuse_multiple_images() {
             assert!(
                 rel_error < 20.0,
                 "CRITICAL: GPU returned stale result! {} iteration {}: GPU={:.4} CPU={:.4} error={:.1}%",
-                name, iteration, gpu_score, cpu_score, rel_error
+                name,
+                iteration,
+                gpu_score,
+                cpu_score,
+                rel_error
             );
         }
     }
@@ -718,7 +722,7 @@ fn test_extreme_distortion_context_reuse() {
         return;
     }
 
-    let (width, height) = (images[0].1 .0, images[0].1 .1);
+    let (width, height) = (images[0].1.0, images[0].1.1);
 
     // Create buffers
     let mut gpu_src = Image::<u8, C<3>>::malloc(width as u32, height as u32)

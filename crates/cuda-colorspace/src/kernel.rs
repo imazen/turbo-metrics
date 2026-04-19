@@ -1,7 +1,7 @@
 use cudarse_driver::sys::CuResult;
-use cudarse_driver::{kernel_params, CuFunction, CuModule, CuStream, LaunchConfig};
+use cudarse_driver::{CuFunction, CuModule, CuStream, LaunchConfig, kernel_params};
 use cudarse_npp::debug_assert_same_size;
-use cudarse_npp::image::{Img, ImgMut, C, P};
+use cudarse_npp::image::{C, Img, ImgMut, P};
 
 pub struct Kernel {
     _module: CuModule,
@@ -403,10 +403,10 @@ fn launch_config_2d(width: u32, height: u32) -> LaunchConfig {
 mod tests {
     use crate::Kernel;
     use cudarse_driver::sys::CuResult;
-    use cudarse_driver::{init_cuda_and_primary_ctx, CuStream};
+    use cudarse_driver::{CuStream, init_cuda_and_primary_ctx};
     use cudarse_npp::image::idei::{Set, SetMany};
     use cudarse_npp::image::isu::Malloc;
-    use cudarse_npp::image::{Image, Img, C};
+    use cudarse_npp::image::{C, Image, Img};
 
     #[test]
     fn test_8bit() -> CuResult<()> {

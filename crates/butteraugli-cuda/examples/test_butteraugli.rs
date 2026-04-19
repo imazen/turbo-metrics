@@ -12,7 +12,7 @@ use zune_image::codecs::png::zune_core::options::DecoderOptions;
 use butteraugli_cuda::Butteraugli;
 use cudarse_driver::CuStream;
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, ImgMut, C};
+use cudarse_npp::image::{C, Image, Img, ImgMut};
 use cudarse_npp::set_stream;
 
 fn main() {

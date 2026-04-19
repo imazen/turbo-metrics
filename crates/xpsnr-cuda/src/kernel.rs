@@ -1,6 +1,6 @@
-use cudarse_driver::{kernel_params, CuFunction, CuModule, CuStream, LaunchConfig};
-use cudarse_npp::image::{Img, ImgMut, C};
-use cudarse_npp::{debug_assert_same_size, ScratchBuffer};
+use cudarse_driver::{CuFunction, CuModule, CuStream, LaunchConfig, kernel_params};
+use cudarse_npp::image::{C, Img, ImgMut};
+use cudarse_npp::{ScratchBuffer, debug_assert_same_size};
 
 pub struct Kernel {
     _module: CuModule,

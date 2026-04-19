@@ -1,4 +1,4 @@
-use std::ffi::{c_void, CStr};
+use std::ffi::{CStr, c_void};
 use std::fmt::Debug;
 use std::mem;
 use std::ptr::null_mut;
@@ -6,9 +6,9 @@ use std::ptr::null_mut;
 pub use cudarse_npp_sys as sys;
 use cudarse_npp_sys::{cudaMemcpyAsync, cudaMemcpyKind};
 use sys::{
-    cudaFreeAsync, cudaMallocAsync, cudaStream_t, nppGetGpuName, nppGetGpuNumSMs, nppGetLibVersion,
-    nppGetMaxThreadsPerBlock, nppGetMaxThreadsPerSM, nppGetStream, nppGetStreamContext,
-    nppSetStream, NppStreamContext, Result,
+    NppStreamContext, Result, cudaFreeAsync, cudaMallocAsync, cudaStream_t, nppGetGpuName,
+    nppGetGpuNumSMs, nppGetLibVersion, nppGetMaxThreadsPerBlock, nppGetMaxThreadsPerSM,
+    nppGetStream, nppGetStreamContext, nppSetStream,
 };
 
 pub mod image;

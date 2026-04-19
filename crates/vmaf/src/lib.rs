@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::ops::RangeInclusive;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 
 mod sys {
     #![allow(non_upper_case_globals)]
@@ -282,7 +282,7 @@ struct VmafPictureCuda(pub(crate) sys::VmafPicture);
 #[cfg(test)]
 mod tests {
     use crate::sys::VmafPixelFormat;
-    use crate::{version, Vmaf, VmafModel};
+    use crate::{Vmaf, VmafModel, version};
     use std::collections::HashMap;
 
     #[test]

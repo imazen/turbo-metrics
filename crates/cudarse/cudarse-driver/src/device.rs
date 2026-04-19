@@ -1,13 +1,13 @@
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 
 use sys::{
-    cuDeviceGet, cuDeviceGetCount, cuDeviceGetName, cuDevicePrimaryCtxRelease_v2,
-    cuDevicePrimaryCtxRetain, cuDeviceTotalMem_v2, CuResult,
+    CuResult, cuDeviceGet, cuDeviceGetCount, cuDeviceGetName, cuDevicePrimaryCtxRelease_v2,
+    cuDevicePrimaryCtxRetain, cuDeviceTotalMem_v2,
 };
 
-use crate::{sys, CuCtx};
+use crate::{CuCtx, sys};
 
 #[repr(transparent)]
 pub struct CuDevice(sys::CUdevice);

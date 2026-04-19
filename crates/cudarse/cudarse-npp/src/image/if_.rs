@@ -1,9 +1,9 @@
 //! Image filtering
 
-use crate::sys::*;
 use crate::ScratchBuffer;
+use crate::sys::*;
 
-use super::{Channels, Image, Img, ImgMut, Sample, C};
+use super::{C, Channels, Image, Img, ImgMut, Sample};
 
 pub trait FilterGaussBorder<S: Sample, C: Channels> {
     /// Filters the image using a Gaussian filter kernel with border control.

@@ -2,8 +2,8 @@ use crate::stream::CuStream;
 use crate::sys;
 use std::ptr::null_mut;
 use sys::{
-    cuEventCreate, cuEventDestroy_v2, cuEventElapsedTime, cuEventQuery, cuEventRecord,
-    cuEventSynchronize, CuError, CuResult,
+    CuError, CuResult, cuEventCreate, cuEventDestroy_v2, cuEventElapsedTime, cuEventQuery,
+    cuEventRecord, cuEventSynchronize,
 };
 
 /// An event is a point in a stream.

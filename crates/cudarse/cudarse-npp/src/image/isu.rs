@@ -5,8 +5,8 @@ use std::ptr::null_mut;
 
 use crate::sys::*;
 
-use crate::image::{Channels, Image, Sample, C, P};
-use crate::{get_stream, Result};
+use crate::image::{C, Channels, Image, P, Sample};
+use crate::{Result, get_stream};
 
 pub trait Malloc {
     /// `malloc` a new image on device
@@ -100,10 +100,10 @@ impl<S: Sample, C: Channels> Drop for Image<S, C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::image::isu::Malloc;
-    use crate::image::C;
-    use crate::image::{Image, Img};
     use crate::Result;
+    use crate::image::C;
+    use crate::image::isu::Malloc;
+    use crate::image::{Image, Img};
 
     #[test]
     fn new_image() -> Result<()> {

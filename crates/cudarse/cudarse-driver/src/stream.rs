@@ -1,11 +1,10 @@
 use cudarse_driver_sys::cuStreamIsCapturing;
 use std::ffi::c_void;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 use sys::{
-    cuCtxGetStreamPriorityRange, cuStreamBeginCapture_v2, cuStreamCreate,
-    cuStreamCreateWithPriority, cuStreamDestroy_v2, cuStreamEndCapture, cuStreamGetPriority,
-    cuStreamQuery, cuStreamSynchronize, cuStreamWaitEvent, CUstreamCaptureMode_enum,
-    CUstream_flags, CuError, CuResult,
+    CUstream_flags, CUstreamCaptureMode_enum, CuError, CuResult, cuCtxGetStreamPriorityRange,
+    cuStreamBeginCapture_v2, cuStreamCreate, cuStreamCreateWithPriority, cuStreamDestroy_v2,
+    cuStreamEndCapture, cuStreamGetPriority, cuStreamQuery, cuStreamSynchronize, cuStreamWaitEvent,
 };
 
 /// Stream priority as returned by [`CuStream::priority_range`].
@@ -22,7 +21,7 @@ pub struct StreamPriorityRange {
     pub greatest: i32,
 }
 
-use crate::{sys, CuEvent, CuGraph};
+use crate::{CuEvent, CuGraph, sys};
 
 #[repr(transparent)]
 pub struct CuStream(pub(crate) sys::CUstream);

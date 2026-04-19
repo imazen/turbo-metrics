@@ -1,8 +1,8 @@
 use crate::sys::*;
 
-use crate::{debug_assert_same_size, Result, ScratchBuffer};
+use crate::{Result, ScratchBuffer, debug_assert_same_size};
 
-use super::{Channels, Img, Sample, C};
+use super::{C, Channels, Img, Sample};
 use paste::paste;
 
 pub trait Sum<S: Sample, C: Channels> {
@@ -221,7 +221,7 @@ mod tests {
     use crate::image::idei::SetMany;
     use crate::image::ist::Sum;
     use crate::image::isu::Malloc;
-    use crate::image::{Image, C};
+    use crate::image::{C, Image};
 
     #[test]
     fn sum() -> crate::Result<()> {

@@ -214,8 +214,8 @@ pub unsafe extern "ptx-kernel" fn max_reduce_f32_to_u32_kernel(
     let tid = core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
         + core::arch::nvptx::_thread_idx_x() as usize;
-    let stride = core::arch::nvptx::_grid_dim_x() as usize
-        * core::arch::nvptx::_block_dim_x() as usize;
+    let stride =
+        core::arch::nvptx::_grid_dim_x() as usize * core::arch::nvptx::_block_dim_x() as usize;
 
     // Per-thread local max over the grid-strided slice of `src`.
     let mut local: u32 = 0;
@@ -261,8 +261,8 @@ pub unsafe extern "ptx-kernel" fn max_reduce_f32_to_u32_batch_kernel(
     let tid_in_z = core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
         + core::arch::nvptx::_thread_idx_x() as usize;
-    let stride = core::arch::nvptx::_grid_dim_x() as usize
-        * core::arch::nvptx::_block_dim_x() as usize;
+    let stride =
+        core::arch::nvptx::_grid_dim_x() as usize * core::arch::nvptx::_block_dim_x() as usize;
     let b = core::arch::nvptx::_block_idx_z() as usize;
 
     let src_b = src.add(b * plane_stride);

@@ -4,7 +4,7 @@
     clippy::missing_transmute_annotations
 )]
 
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 
 pub use cudarse_driver_sys as sys;
 pub use device::*;
@@ -15,8 +15,8 @@ pub use mem::*;
 pub use module::*;
 pub use stream::*;
 use sys::{
-    cuCtxGetCurrent, cuCtxSetCurrent, cuCtxSynchronize, cuDriverGetVersion, cuInit,
-    cuMemGetInfo_v2, cuMemcpy2DAsync_v2, cuProfilerStart, cuProfilerStop, CUDA_MEMCPY2D,
+    CUDA_MEMCPY2D, cuCtxGetCurrent, cuCtxSetCurrent, cuCtxSynchronize, cuDriverGetVersion, cuInit,
+    cuMemGetInfo_v2, cuMemcpy2DAsync_v2, cuProfilerStart, cuProfilerStop,
 };
 
 pub use sys::CuResult;
@@ -103,7 +103,7 @@ pub fn copy(copy: &CUDA_MEMCPY2D, stream: &CuStream) -> CuResult<()> {
 mod tests {
     use std::ptr::{null, null_mut};
 
-    use crate::{init_cuda, kernel_params, CuDevice, CuModule, CuResult, CuStream, LaunchConfig};
+    use crate::{CuDevice, CuModule, CuResult, CuStream, LaunchConfig, init_cuda, kernel_params};
 
     #[test]
     fn test_device() -> CuResult<()> {

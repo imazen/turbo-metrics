@@ -1,7 +1,6 @@
 use crate::{
-    assert_same_size, row_align, AsPlane, AsPlaneMut, CastStorage, HostAccessible,
-    HostAccessibleMut, OwnedSampleStorage, Sample, SampleStorage, SetPlane, StaticSample,
-    TransferPlane,
+    AsPlane, AsPlaneMut, CastStorage, HostAccessible, HostAccessibleMut, OwnedSampleStorage,
+    Sample, SampleStorage, SetPlane, StaticSample, TransferPlane, assert_same_size, row_align,
 };
 use cudarse_driver::{CuBox, CuPin, CuResult, CuStream};
 use std::borrow::{Borrow, BorrowMut};

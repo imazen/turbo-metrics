@@ -346,7 +346,7 @@ mod tests {
     use std::fs::File;
     use std::io::BufReader;
 
-    use crate::h264::{avcc_extradata_to_annexb, extract_sps_pps_clean, NalReader, NaluType};
+    use crate::h264::{NalReader, NaluType, avcc_extradata_to_annexb, extract_sps_pps_clean};
 
     const RAW_H264: &'static str = "../../data/raw.h264";
     const RAW_H264_SOURCE: &'static str = "../../data/dummy_encode.mkv";

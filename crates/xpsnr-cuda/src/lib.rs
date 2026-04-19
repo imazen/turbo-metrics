@@ -3,9 +3,9 @@ use cudarse_driver::CuStream;
 use cudarse_npp::image::idei::Convert;
 use cudarse_npp::image::if_::Filter;
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, C};
+use cudarse_npp::image::{C, Image, Img};
 use cudarse_npp::sys::NppiSize;
-use cudarse_npp::{get_stream_ctx, ScratchBuffer};
+use cudarse_npp::{ScratchBuffer, get_stream_ctx};
 use std::ops::Add;
 
 mod kernel;
@@ -140,11 +140,7 @@ impl Xpsnr {
                 self.weights[blk] = msact.sqrt().recip();
                 let mut msact_prev = if blk % self.blocks_w == 0 {
                     // First column
-                    if blk > 1 {
-                        self.weights[blk - 2]
-                    } else {
-                        0.0
-                    }
+                    if blk > 1 { self.weights[blk - 2] } else { 0.0 }
                 } else {
                     if blk % self.blocks_w > 1 {
                         self.weights[blk - 2].max(self.weights[blk])
@@ -200,7 +196,7 @@ impl Xpsnr {
 #[cfg(test)]
 mod tests {
     use crate::Xpsnr;
-    use cudarse_driver::{init_cuda_and_primary_ctx, CuStream};
+    use cudarse_driver::{CuStream, init_cuda_and_primary_ctx};
     use cudarse_npp::image::ImgMut;
 
     #[test]

@@ -20,13 +20,13 @@
 
 mod kernel;
 
-use cudarse_driver::sys::CuError;
 use cudarse_driver::CuStream;
+use cudarse_driver::sys::CuError;
 use cudarse_npp::image::ist::Sum;
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, C};
+use cudarse_npp::image::{C, Image};
 use cudarse_npp::sys::NppStreamContext;
-use cudarse_npp::{set_stream, ScratchBuffer};
+use cudarse_npp::{ScratchBuffer, set_stream};
 
 /// Get NPP stream context for the given CUDA stream.
 /// Sets the stream globally for NPP and returns the context.

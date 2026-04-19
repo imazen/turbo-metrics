@@ -2,9 +2,9 @@
 //!
 //! Loads the PTX and provides type-safe kernel launch wrappers.
 
-use cudarse_driver::{kernel_params, CuFunction, CuModule, CuStream, LaunchConfig};
+use cudarse_driver::{CuFunction, CuModule, CuStream, LaunchConfig, kernel_params};
 use cudarse_npp::debug_assert_same_size;
-use cudarse_npp::image::{Img, ImgMut, C};
+use cudarse_npp::image::{C, Img, ImgMut};
 
 /// Container for all Butteraugli CUDA kernels
 pub struct Kernel {
@@ -753,7 +753,9 @@ impl Kernel {
                 .launch(
                     &Self::launch_config_2d(dst_width as u32, dst_height as u32),
                     stream,
-                    kernel_params!(dst, src, dst_width, dst_height, src_width, src_height, scale,),
+                    kernel_params!(
+                        dst, src, dst_width, dst_height, src_width, src_height, scale,
+                    ),
                 )
                 .expect("add_upsample_2x launch failed");
         }
@@ -1143,7 +1145,14 @@ impl Kernel {
                     &Self::batch_config_1d(plane_stride, batch),
                     stream,
                     kernel_params!(
-                        src_r, src_g, src_b, blur_r, blur_g, blur_b, plane_stride, intensity,
+                        src_r,
+                        src_g,
+                        src_b,
+                        blur_r,
+                        blur_g,
+                        blur_b,
+                        plane_stride,
+                        intensity,
                     ),
                 )
                 .expect("opsin_dynamics_batch launch failed");

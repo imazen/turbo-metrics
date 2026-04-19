@@ -1,8 +1,8 @@
-use crate::{sys, CuStream};
+use crate::{CuStream, sys};
 use std::mem;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
-use std::ptr::{slice_from_raw_parts_mut, NonNull};
+use std::ptr::{NonNull, slice_from_raw_parts_mut};
 use sys::CuResult;
 
 /// Like [Box], but in Cuda global memory.

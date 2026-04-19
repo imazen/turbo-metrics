@@ -185,8 +185,8 @@ impl TransferCharacteristics for Passtrough {
 trait MatrixCoefficients {
     const CONSTANTS: Vec2;
 
-    fn coefficients<LumaCR: ColorRange, ChromaCR: ColorRange, const N: usize>(
-    ) -> (f32, f32, f32, f32, f32)
+    fn coefficients<LumaCR: ColorRange, ChromaCR: ColorRange, const N: usize>()
+    -> (f32, f32, f32, f32, f32)
     where
         Bitdepth<N>: Sample,
     {

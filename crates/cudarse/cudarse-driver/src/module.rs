@@ -1,12 +1,12 @@
-use crate::{sys, CuFunction};
+use crate::{CuFunction, sys};
 use cudarse_driver_sys::cuModuleLoadData;
 use std::ffi::CString;
 use std::mem;
 use std::path::Path;
 use std::ptr::null_mut;
 use sys::{
-    cuModuleEnumerateFunctions, cuModuleGetFunction, cuModuleGetFunctionCount, cuModuleLoad,
-    cuModuleUnload, CuResult,
+    CuResult, cuModuleEnumerateFunctions, cuModuleGetFunction, cuModuleGetFunctionCount,
+    cuModuleLoad, cuModuleUnload,
 };
 
 #[repr(transparent)]

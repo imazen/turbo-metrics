@@ -1,10 +1,10 @@
-use crate::{sys, CuStream};
+use crate::{CuStream, sys};
 use std::ffi::CString;
 use std::path::Path;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 use sys::{
-    cuGraphDebugDotPrint, cuGraphDestroy, cuGraphExecDestroy, cuGraphInstantiateWithFlags,
-    cuGraphLaunch, CuResult,
+    CuResult, cuGraphDebugDotPrint, cuGraphDestroy, cuGraphExecDestroy,
+    cuGraphInstantiateWithFlags, cuGraphLaunch,
 };
 
 pub struct CuGraph(pub(crate) NonNull<sys::CUgraph_st>);

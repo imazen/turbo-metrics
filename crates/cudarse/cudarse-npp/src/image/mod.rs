@@ -1,5 +1,5 @@
 use crate::sys::{
-    cudaFreeAsync, cudaMemcpy2DAsync, cudaMemcpyKind, cudaStream_t, NppiRect, NppiSize, Result,
+    NppiRect, NppiSize, Result, cudaFreeAsync, cudaMemcpy2DAsync, cudaMemcpyKind, cudaStream_t,
 };
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -610,9 +610,9 @@ impl<'a, S: Sample, C: Channels> ImgMut<S, C> for &mut ImgViewMut<'a, S, C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::image::isu::Malloc;
-    use crate::image::Image;
     use crate::image::C;
+    use crate::image::Image;
+    use crate::image::isu::Malloc;
 
     #[test]
     fn into_inner_does_not_drop() {

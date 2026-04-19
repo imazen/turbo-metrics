@@ -2,9 +2,9 @@
 
 use crate::sys::*;
 
-use crate::{debug_assert_same_size, Result};
+use crate::{Result, debug_assert_same_size};
 
-use super::{Channels, Image, Img, ImgMut, Sample, C};
+use super::{C, Channels, Image, Img, ImgMut, Sample};
 
 pub trait Mul<S: Sample, C: Channels> {
     /// Pixel by pixel multiply of two images.
@@ -111,11 +111,11 @@ impl_sqrip!(f32, C<1>, _32f, C1);
 mod tests {
     use cudarse_driver::init_cuda_and_primary_ctx;
 
+    use crate::Result;
     use crate::get_stream_ctx;
     use crate::image::ial::SqrIP;
     use crate::image::isu::Malloc;
-    use crate::image::{Image, C};
-    use crate::Result;
+    use crate::image::{C, Image};
 
     #[test]
     fn mul() {}

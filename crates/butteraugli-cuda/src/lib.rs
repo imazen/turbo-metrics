@@ -21,15 +21,15 @@
 //! println!("Butteraugli distance: {}", score);
 //! ```
 
-mod kernel;
 pub mod batch;
+mod kernel;
 pub use batch::ButteraugliBatch;
 
 use cudarse_driver::{CuBox, CuGraphExec, CuStream};
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, Img, C};
+use cudarse_npp::image::{C, Image, Img};
 use cudarse_npp::sys::{NppStreamContext, NppiSize};
-use cudarse_npp::{set_stream, ScratchBuffer};
+use cudarse_npp::{ScratchBuffer, set_stream};
 
 /// Helper: bind NPP's global stream state to our stream and return the
 /// populated stream context. NPP routines that take an explicit
@@ -275,8 +275,7 @@ impl Butteraugli {
         let stream = {
             let range = CuStream::priority_range()
                 .map_err(|e| Error::Cuda(format!("priority_range failed: {:?}", e)))?;
-            CuStream::new_with_priority(range.least)
-                .map_err(|e| Error::Cuda(format!("{:?}", e)))?
+            CuStream::new_with_priority(range.least).map_err(|e| Error::Cuda(format!("{:?}", e)))?
         };
         let kernel = Kernel::load();
 
@@ -380,7 +379,11 @@ impl Butteraugli {
             Ok([alloc_plane()?, alloc_plane()?, alloc_plane()?])
         };
         let alloc_3_planes_half = || -> Result<[CuBox<[f32]>; 3], Error> {
-            Ok([alloc_plane_half()?, alloc_plane_half()?, alloc_plane_half()?])
+            Ok([
+                alloc_plane_half()?,
+                alloc_plane_half()?,
+                alloc_plane_half()?,
+            ])
         };
         let ref_freq_full = [
             alloc_3_planes_full()?,
@@ -869,13 +872,7 @@ impl Butteraugli {
 
     /// Compute differences at a given resolution. Works on whichever
     /// freq1/freq2/block_diff_* state is currently populated.
-    fn compute_differences_at_res(
-        &mut self,
-        w: usize,
-        h: usize,
-        size: usize,
-    ) -> Result<(), Error> {
-
+    fn compute_differences_at_res(&mut self, w: usize, h: usize, size: usize) -> Result<(), Error> {
         // Clear accumulators
         for i in 0..3 {
             self.kernel.clear_buffer(
@@ -2108,19 +2105,9 @@ impl Butteraugli {
             }
         }
         self.convert_image_to_xyb(0, self.half_width, self.half_height)?;
-        self.separate_frequencies_for_image(
-            0,
-            self.half_width,
-            self.half_height,
-            self.half_size,
-        )?;
+        self.separate_frequencies_for_image(0, self.half_width, self.half_height, self.half_size)?;
         self.stash_freq1_to_cache(self.half_size, true)?;
-        self.prepare_reference_masking(
-            self.half_width,
-            self.half_height,
-            self.half_size,
-            true,
-        )?;
+        self.prepare_reference_masking(self.half_width, self.half_height, self.half_size, true)?;
 
         // Sync to ensure all cache writes are ordered before the next
         // compute_with_reference call starts reading from them.
@@ -2143,18 +2130,13 @@ impl Butteraugli {
     /// workflow the `dis_dev` staging image is allocated once per
     /// `(w, h)` and reused, so the graph captures once and replays for
     /// every subsequent score.
-    pub fn compute_with_reference(
-        &mut self,
-        distorted: impl Img<u8, C<3>>,
-    ) -> Result<f32, Error> {
+    pub fn compute_with_reference(&mut self, distorted: impl Img<u8, C<3>>) -> Result<f32, Error> {
         if !self.reference_cache_valid {
             return Err(Error::Cuda(
                 "no cached reference; call set_reference() first".into(),
             ));
         }
-        if distorted.width() as usize != self.width
-            || distorted.height() as usize != self.height
-        {
+        if distorted.width() as usize != self.width || distorted.height() as usize != self.height {
             return Err(Error::InvalidDimensions(format!(
                 "Expected {}x{}, got {}x{}",
                 self.width,
@@ -2212,10 +2194,7 @@ impl Butteraugli {
     /// `begin_capture()` / `end_capture()`. Also ends with the
     /// `max_reduce` kernel so the captured graph covers everything up
     /// to (but not including) reading the final score back to host.
-    fn run_distorted_pipeline(
-        &mut self,
-        distorted: impl Img<u8, C<3>>,
-    ) -> Result<(), Error> {
+    fn run_distorted_pipeline(&mut self, distorted: impl Img<u8, C<3>>) -> Result<(), Error> {
         // ---- Full resolution ----
         self.kernel
             .srgb_to_linear(&self.stream, distorted, self.linear2.full_view_mut());
@@ -2241,12 +2220,7 @@ impl Butteraugli {
         self.separate_frequencies_for_image(1, self.width, self.height, self.size)?;
         self.restore_freq1_from_cache(self.size, false)?;
         self.compute_differences_at_res(self.width, self.height, self.size)?;
-        self.apply_distorted_masking_with_cached_ref(
-            self.width,
-            self.height,
-            self.size,
-            false,
-        )?;
+        self.apply_distorted_masking_with_cached_ref(self.width, self.height, self.size, false)?;
         self.combine_diffmap()?;
 
         // ---- Half resolution ----
@@ -2263,12 +2237,7 @@ impl Butteraugli {
             }
         }
         self.convert_image_to_xyb(1, self.half_width, self.half_height)?;
-        self.separate_frequencies_for_image(
-            1,
-            self.half_width,
-            self.half_height,
-            self.half_size,
-        )?;
+        self.separate_frequencies_for_image(1, self.half_width, self.half_height, self.half_size)?;
         self.restore_freq1_from_cache(self.half_size, true)?;
         self.compute_differences_at_res(self.half_width, self.half_height, self.half_size)?;
         self.apply_distorted_masking_with_cached_ref(

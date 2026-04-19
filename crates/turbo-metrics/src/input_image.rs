@@ -1,12 +1,12 @@
 use crate::color::ColorRange;
-use crate::img::{reinterpret_slice, reinterpret_vec, ColorRepr, CpuImg, SampleType};
+use crate::img::{ColorRepr, CpuImg, SampleType, reinterpret_slice, reinterpret_vec};
 use crate::{FormatIdentifier, FrameSource, HwFrame};
 use codec_bitstream::{
     ColorCharacteristics, ColourPrimaries, MatrixCoefficients, TransferCharacteristic,
 };
 use cudarse_driver::CuStream;
 use cudarse_npp::image::isu::Malloc;
-use cudarse_npp::image::{Image, ImgMut, C};
+use cudarse_npp::image::{C, Image, ImgMut};
 use image::DynamicImage;
 use std::collections::VecDeque;
 use std::error::Error;

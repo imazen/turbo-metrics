@@ -1,8 +1,8 @@
-use crate::color::{color_characteristics_from_format, ColorRange};
+use crate::color::{ColorRange, color_characteristics_from_format};
 use crate::input_image::PROBE_LEN;
-use crate::{codec_to_nvdec, FormatIdentifier, FrameSource, HwFrame};
+use crate::{FormatIdentifier, FrameSource, HwFrame, codec_to_nvdec};
 use codec_bitstream::h264::NaluType;
-use codec_bitstream::{av1, h264, ivf, Codec, ColorCharacteristics};
+use codec_bitstream::{Codec, ColorCharacteristics, av1, h264, ivf};
 use cudarse_driver::CuStream;
 use cudarse_video::dec_simple::NvDecoderSimple;
 use cudarse_video::parser::CuvidParser;
