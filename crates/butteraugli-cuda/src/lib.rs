@@ -160,11 +160,11 @@ mod consts {
 /// Computes the perceptual distance between two images using the Butteraugli
 /// algorithm on the GPU.
 pub struct Butteraugli {
-    kernel: Kernel,
-    stream: CuStream,
-    width: usize,
-    height: usize,
-    size: usize,
+    pub(crate) kernel: Kernel,
+    pub(crate) stream: CuStream,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) size: usize,
 
     // GPU buffers for linear RGB (interleaved, for sRGB conversion)
     linear1: Image<f32, C<3>>,
@@ -202,9 +202,9 @@ pub struct Butteraugli {
     temp2: CuBox<[f32]>,
 
     // Half-resolution buffers for multi-scale
-    half_width: usize,
-    half_height: usize,
-    half_size: usize,
+    pub(crate) half_width: usize,
+    pub(crate) half_height: usize,
+    pub(crate) half_size: usize,
     diffmap_half: CuBox<[f32]>,
 
     // Reduction scratch buffer (kept allocated for future use)
@@ -233,12 +233,12 @@ pub struct Butteraugli {
     // ref_mask_final_{full,half}: fuzzy_erosion of the above — the mask
     //     plugged into compute_diffmap.
     reference_cache_valid: bool,
-    ref_freq_full: [[CuBox<[f32]>; 3]; 4],
-    ref_freq_half: [[CuBox<[f32]>; 3]; 4],
-    ref_mask_blurred_full: CuBox<[f32]>,
-    ref_mask_final_full: CuBox<[f32]>,
-    ref_mask_blurred_half: CuBox<[f32]>,
-    ref_mask_final_half: CuBox<[f32]>,
+    pub(crate) ref_freq_full: [[CuBox<[f32]>; 3]; 4],
+    pub(crate) ref_freq_half: [[CuBox<[f32]>; 3]; 4],
+    pub(crate) ref_mask_blurred_full: CuBox<[f32]>,
+    pub(crate) ref_mask_final_full: CuBox<[f32]>,
+    pub(crate) ref_mask_blurred_half: CuBox<[f32]>,
+    pub(crate) ref_mask_final_half: CuBox<[f32]>,
 }
 
 impl Drop for Butteraugli {

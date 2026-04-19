@@ -66,6 +66,7 @@ pub struct Kernel {
     malta_diff_map_lf_batch_split_stride: CuFunction,
     mask_to_error_mul_batch_split_stride: CuFunction,
     broadcast_plane_batch: CuFunction,
+    compute_diffmap_batch: CuFunction,
     fuzzy_erosion_batch: CuFunction,
     max_reduce_f32_to_u32_batch: CuFunction,
 }
@@ -218,6 +219,9 @@ impl Kernel {
             broadcast_plane_batch: module
                 .function_by_name("broadcast_plane_batch_kernel")
                 .expect("broadcast_plane_batch_kernel not found"),
+            compute_diffmap_batch: module
+                .function_by_name("compute_diffmap_batch_kernel")
+                .expect("compute_diffmap_batch_kernel not found"),
             fuzzy_erosion_batch: module
                 .function_by_name("fuzzy_erosion_batch_kernel")
                 .expect("fuzzy_erosion_batch_kernel not found"),
@@ -1555,6 +1559,47 @@ impl Kernel {
                     ),
                 )
                 .expect("mask_to_error_mul_batch_split_stride launch failed");
+        }
+    }
+
+    /// Batched compute_diffmap. `size_per_image` is the per-image work
+    /// size (plane or half_plane); `plane_stride` is the slot stride in
+    /// the concatenated buffers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_diffmap_batch(
+        &self,
+        stream: &CuStream,
+        mask: *const f32,
+        dc0: *const f32,
+        dc1: *const f32,
+        dc2: *const f32,
+        ac0: *const f32,
+        ac1: *const f32,
+        ac2: *const f32,
+        dst: *mut f32,
+        size_per_image: usize,
+        plane_stride: usize,
+        batch: u32,
+    ) {
+        unsafe {
+            self.compute_diffmap_batch
+                .launch(
+                    &Self::batch_config_1d(size_per_image, batch),
+                    stream,
+                    kernel_params!(
+                        mask,
+                        dc0,
+                        dc1,
+                        dc2,
+                        ac0,
+                        ac1,
+                        ac2,
+                        dst,
+                        size_per_image,
+                        plane_stride,
+                    ),
+                )
+                .expect("compute_diffmap_batch launch failed");
         }
     }
 

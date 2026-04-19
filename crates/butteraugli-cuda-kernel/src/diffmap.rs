@@ -69,6 +69,50 @@ pub unsafe extern "ptx-kernel" fn compute_diffmap_kernel(
     *dst.add(idx) = (maskval_ac * ac_sum + maskval_dc * dc_sum).sqrt();
 }
 
+/// Batched compute_diffmap. `size` is the per-image work size (plane or
+/// half_plane). `plane_stride` is the per-image slot stride in the
+/// concatenated buffers (usually full-plane even at half-res, because
+/// the same buffers host both passes). gridDim.z = batch_size.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn compute_diffmap_batch_kernel(
+    mask: *const f32,
+    block_diff_dc0: *const f32,
+    block_diff_dc1: *const f32,
+    block_diff_dc2: *const f32,
+    block_diff_ac0: *const f32,
+    block_diff_ac1: *const f32,
+    block_diff_ac2: *const f32,
+    dst: *mut f32,
+    size: usize,
+    plane_stride: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    if idx >= size {
+        return;
+    }
+    let off = b * plane_stride;
+    let mask = mask.add(off);
+    let dc0 = block_diff_dc0.add(off);
+    let dc1 = block_diff_dc1.add(off);
+    let dc2 = block_diff_dc2.add(off);
+    let ac0 = block_diff_ac0.add(off);
+    let ac1 = block_diff_ac1.add(off);
+    let ac2 = block_diff_ac2.add(off);
+    let dst = dst.add(off);
+
+    let mask_val = *mask.add(idx);
+    let maskval_ac = mask_y(mask_val);
+    let maskval_dc = mask_dc_y(mask_val);
+
+    let ac_sum = *ac0.add(idx) + *ac1.add(idx) + *ac2.add(idx);
+    let dc_sum = *dc0.add(idx) + *dc1.add(idx) + *dc2.add(idx);
+
+    *dst.add(idx) = (maskval_ac * ac_sum + maskval_dc * dc_sum).sqrt();
+}
+
 /// L2 difference: accumulate squared difference with weight
 /// Used for simple difference metrics
 #[unsafe(no_mangle)]
