@@ -21,10 +21,13 @@ const C2: f32 = 0.0009;
 #[inline(always)]
 unsafe fn atomic_max_nonneg_f32(ptr: *mut u32, value: f32) {
     let bits = value.to_bits();
+    let mut _discard: u32;
     core::arch::asm!(
-        "atom.global.max.u32 _, [{p}], {v};",
+        "atom.global.max.u32 {d}, [{p}], {v};",
+        d = out(reg32) _discard,
         p = in(reg64) ptr,
         v = in(reg32) bits,
+        options(nostack, preserves_flags),
     );
 }
 
