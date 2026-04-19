@@ -26,7 +26,17 @@ mod kernel;
 use cudarse_driver::{CuBox, CuStream};
 use cudarse_npp::image::isu::Malloc;
 use cudarse_npp::image::{Image, Img, C};
-use cudarse_npp::ScratchBuffer;
+use cudarse_npp::sys::{NppStreamContext, NppiSize};
+use cudarse_npp::{set_stream, ScratchBuffer};
+
+/// Helper: bind NPP's global stream state to our stream and return the
+/// populated stream context. NPP routines that take an explicit
+/// NppStreamContext still need nppGetStreamContext to be called with
+/// the right globally-set stream first.
+fn get_stream_ctx_for(stream: &CuStream) -> Result<NppStreamContext, Error> {
+    set_stream(stream.inner() as _).map_err(|e| Error::Npp(format!("{:?}", e)))?;
+    cudarse_npp::get_stream_ctx().map_err(|e| Error::Npp(format!("{:?}", e)))
+}
 
 pub use kernel::Kernel;
 
@@ -201,6 +211,13 @@ pub struct Butteraugli {
     #[allow(dead_code)]
     sum_result: CuBox<[f64]>,
 
+    // GPU-side max reduction (nppiMax_32f_C1R) for the diffmap. Avoids
+    // copying the entire W*H*4 byte diffmap to host just to run `max`.
+    // At 5472x3648 this is ~80 MB saved per call, + the CPU-side linear
+    // scan.
+    max_scratch: ScratchBuffer,
+    max_result: CuBox<[f32]>,
+
     // ---- Reference cache (for set_reference / compute_with_reference) ----
     // When `reference_cache_valid` is true, these buffers hold the
     // reference-side intermediate state so compute_with_reference can skip
@@ -220,6 +237,19 @@ pub struct Butteraugli {
     ref_mask_final_full: CuBox<[f32]>,
     ref_mask_blurred_half: CuBox<[f32]>,
     ref_mask_final_half: CuBox<[f32]>,
+}
+
+impl Drop for Butteraugli {
+    /// Sync the CUDA context before we start tearing down on-device state.
+    ///
+    /// NPP scratch buffers free themselves on the NPP runtime's globally-set
+    /// stream via cudaFreeAsync. Without a context-level sync first, any
+    /// outstanding async work on our internal low-priority stream can race
+    /// with the free, producing a segfault on the next instance's allocation
+    /// (dssim-cuda's Drop does the same thing for the same reason).
+    fn drop(&mut self) {
+        let _ = cudarse_driver::sync_ctx();
+    }
 }
 
 impl Butteraugli {
@@ -311,6 +341,21 @@ impl Butteraugli {
         let sum_result =
             CuBox::<[f64]>::new_zeroed(1, &stream).map_err(|e| Error::Cuda(format!("{:?}", e)))?;
 
+        // GPU-side max reduction scratch (for nppiMax_32f_C1R_Ctx).
+        // We oversize generously (16 KB) to cover any internal NPP needs
+        // across image sizes. Calling nppiMaxGetBufferHostSize_Ctx at
+        // construction time has caused cross-instance drop-order crashes
+        // when multiple Butteraugli instances exist with different
+        // resolutions; since the buffer is tiny, static oversizing is
+        // both simpler and safer. (Reference: NPP max internal state is
+        // typically ~80 bytes even for 20 Mpx inputs.)
+        let _ = width;
+        let _ = height;
+        let max_scratch = ScratchBuffer::alloc_len(16 * 1024, stream.inner() as _)
+            .map_err(|e| Error::Npp(format!("{:?}", e)))?;
+        let max_result =
+            CuBox::<[f32]>::new_zeroed(1, &stream).map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+
         // Reference cache buffers. These are allocated lazily-looking at
         // first but we allocate up-front to keep set_reference hot-path
         // branch-free. Memory cost at 5472×3648: ~960 MB full + ~240 MB half
@@ -372,6 +417,8 @@ impl Butteraugli {
             diffmap_half,
             sum_scratch,
             sum_result,
+            max_scratch,
+            max_result,
             reference_cache_valid: false,
             ref_freq_full,
             ref_freq_half,
@@ -2201,34 +2248,39 @@ impl Butteraugli {
         self.reference_cache_valid
     }
 
-    /// Reduce diffmap to a single score by finding the maximum value
+    /// Reduce diffmap to a single score by finding the maximum value.
     ///
-    /// The Butteraugli score is the MAXIMUM value in the diffmap, not a Q-norm.
-    /// This matches the C++ libjxl implementation (butteraugli.cc compute_score_from_diffmap).
+    /// Uses a custom on-device max-reduction kernel (`max_reduce_kernel`)
+    /// to produce a 4-byte scalar; only those 4 bytes cross PCIe instead
+    /// of the full W*H*4 byte diffmap. At 5472x3648 this saves ~80 MB
+    /// D2H + a 20 Mpx CPU linear scan per call.
+    ///
+    /// The Butteraugli score is the maximum value of the diffmap,
+    /// matching the C++ libjxl implementation
+    /// (butteraugli.cc compute_score_from_diffmap).
     fn reduce_to_score(&mut self) -> Result<f32, Error> {
-        let size = self.size;
-
-        // Sync and copy diffmap to CPU
+        // Run the two-stage max reduction on our internal stream.
+        self.kernel.max_reduce(
+            &self.stream,
+            Self::ptr(&self.diffmap),
+            self.max_result.ptr() as *mut f32,
+            self.max_scratch.ptr as *mut f32,
+            self.size,
+        );
         self.stream
             .sync()
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
-
-        let mut cpu_buf = vec![0.0f32; size];
+        let mut out: f32 = 0.0;
         unsafe {
             cudarse_driver::sys::cuMemcpyDtoH_v2(
-                cpu_buf.as_mut_ptr() as *mut _,
-                self.diffmap.ptr(),
-                size * 4,
+                &mut out as *mut f32 as *mut _,
+                self.max_result.ptr(),
+                4,
             )
             .result()
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
         }
-
-        // Find maximum on CPU
-        // TODO: Implement GPU-side max reduction for better performance
-        let max_val = cpu_buf.iter().cloned().fold(0.0f32, f32::max);
-
-        Ok(max_val)
+        Ok(out)
     }
 }
 

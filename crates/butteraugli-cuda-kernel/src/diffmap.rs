@@ -151,6 +151,58 @@ pub unsafe extern "ptx-kernel" fn l2_asym_diff_kernel(
     *dst.add(idx) = total;
 }
 
+/// Atomic max reduction on a u32 result. For non-negative f32 values
+/// the IEEE-754 bit pattern compares the same as the float value, so
+/// we reinterpret as u32 and use CAS-based max.
+///
+/// Butteraugli's diffmap is derived from a sqrt of sums of squares —
+/// always >= 0 — so this is safe.
+///
+/// Caller MUST zero `result_u32` on the same stream before the launch.
+/// (This kernel doesn't zero it to avoid an extra launch; the callsite
+/// has a cuMemsetD32Async helper.)
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn max_reduce_f32_to_u32_kernel(
+    src: *const f32,
+    result_u32: *mut u32,
+    size: usize,
+) {
+    let tid = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let stride = core::arch::nvptx::_grid_dim_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize;
+
+    // Per-thread local max over the grid-strided slice of `src`.
+    let mut local: u32 = 0;
+    let mut i = tid;
+    while i < size {
+        let v = *src.add(i);
+        let bits = v.to_bits();
+        if bits > local {
+            local = bits;
+        }
+        i += stride;
+    }
+
+    if local == 0 {
+        return;
+    }
+
+    // Single atomicMax.u32 on the final result. Emit inline PTX directly
+    // since nvptx targets don't expose core::intrinsics::atomic_umax.
+    // For non-negative f32 values the bit pattern compares the same as
+    // the float, so this correctly finds the maximum float.
+    let mut _discard: u32;
+    core::arch::asm!(
+        "atom.global.max.u32 {d}, [{p}], {v};",
+        d = out(reg32) _discard,
+        p = in(reg64) result_u32,
+        v = in(reg32) local,
+        options(nostack, preserves_flags),
+    );
+}
+
 /// Compute x^q for each element (for norm calculation)
 /// The actual reduction/sum will be done on host side using NPP
 #[unsafe(no_mangle)]

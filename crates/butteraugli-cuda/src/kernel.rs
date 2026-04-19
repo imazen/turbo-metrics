@@ -46,6 +46,7 @@ pub struct Kernel {
     l2_diff: CuFunction,
     l2_asym_diff: CuFunction,
     power_elements: CuFunction,
+    max_reduce_f32_to_u32: CuFunction,
 }
 
 impl Kernel {
@@ -148,6 +149,9 @@ impl Kernel {
             power_elements: module
                 .function_by_name("power_elements_kernel")
                 .expect("power_elements_kernel not found"),
+            max_reduce_f32_to_u32: module
+                .function_by_name("max_reduce_f32_to_u32_kernel")
+                .expect("max_reduce_f32_to_u32_kernel not found"),
             _module: module,
         }
     }
@@ -929,6 +933,52 @@ impl Kernel {
             cudarse_driver::sys::cuMemsetD32Async(dst as u64, 0, size, stream.raw())
                 .result()
                 .expect("clear_buffer failed");
+        }
+    }
+
+    /// GPU-side max reduction over a non-negative f32 array.
+    ///
+    /// `src` is the device pointer to a contiguous f32 buffer of length
+    /// `size`. `result` must be a u32-aligned device pointer (interpreted
+    /// as f32 bits on return). `_scratch` is unused by the current
+    /// atomicMax path but is kept in the signature so a future
+    /// two-phase reduction can slot in without API churn.
+    ///
+    /// The kernel zeros `result` on the provided stream before launching
+    /// the reduction kernel, so it's safe to call back-to-back.
+    pub fn max_reduce(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        result: *mut f32,
+        _scratch: *mut f32,
+        size: usize,
+    ) {
+        // Zero the u32 result slot.
+        unsafe {
+            cudarse_driver::sys::cuMemsetD32Async(result as u64, 0, 1, stream.raw())
+                .result()
+                .expect("max_reduce clear failed");
+        }
+        // Launch ~4096 threads in total: 16 blocks of 256. Each thread
+        // scans a grid-strided slice, computes its local max, then
+        // contends on one atomicMax. Contention is low because most
+        // threads fail the early-out check or hit the global max once.
+        const THREADS: u32 = 256;
+        const BLOCKS: u32 = 16;
+        let config = LaunchConfig {
+            grid_dim: (BLOCKS, 1, 1),
+            block_dim: (THREADS, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        unsafe {
+            self.max_reduce_f32_to_u32
+                .launch(
+                    &config,
+                    stream,
+                    kernel_params!(src, result as *mut u32, size,),
+                )
+                .expect("max_reduce launch failed");
         }
     }
 }
