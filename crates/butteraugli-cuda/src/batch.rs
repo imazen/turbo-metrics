@@ -21,7 +21,7 @@
 //! `ref_mask_final_*` written into `mask_batch` by a tiny broadcast
 //! kernel.
 
-use cudarse_driver::{sys::cuMemcpyAsync, CuBox};
+use cudarse_driver::{sys::cuMemcpyAsync, CuBox, CuGraphExec};
 use cudarse_npp::image::isu::Malloc;
 use cudarse_npp::image::{Image, Img, ImgMut, C};
 
@@ -57,6 +57,17 @@ pub struct ButteraugliBatch {
     max_results: CuBox<[u32]>,
     /// Staging Image for N packed-RGB u8 uploads.
     dis_staging: Image<u8, C<3>>,
+    /// Lazily captured CUDA graph of the compute pipeline. All the
+    /// pointers the graph references (dis_staging, linear2_batch,
+    /// xyb2_batch, freq2_batch, block_diff_*_batch, mask_*_batch,
+    /// diffmap*_batch, max_results) are owned by this struct and
+    /// stable for its lifetime. The H2D upload of distorted bytes
+    /// happens OUTSIDE the graph (see compute_batch_with_reference)
+    /// because the host-side source pointer changes per call. The
+    /// graph covers everything from srgb_to_linear_batch through
+    /// max_reduce_batch; the CPU-side sync + D2H of the 4N-byte
+    /// result then happens after graph replay.
+    compute_graph: Option<CuGraphExec>,
 }
 
 impl ButteraugliBatch {
@@ -125,6 +136,7 @@ impl ButteraugliBatch {
             diffmap_half_batch,
             max_results,
             dis_staging,
+            compute_graph: None,
         })
     }
 
@@ -138,6 +150,12 @@ impl ButteraugliBatch {
 
     /// Cache the reference image on the GPU. Bit-identical to
     /// [`Butteraugli::set_reference`] — just delegates.
+    ///
+    /// Does NOT invalidate the captured compute graph: the graph
+    /// references the cached `ref_*` buffers by pointer, and those
+    /// pointers are stable across set_reference calls (only the
+    /// contents change). The graph replays against the new reference
+    /// state transparently.
     pub fn set_reference(&mut self, reference: impl Img<u8, C<3>>) -> Result<(), Error> {
         self.inner.set_reference(reference)
     }
@@ -147,7 +165,11 @@ impl ButteraugliBatch {
     }
 
     pub fn clear_reference(&mut self) {
-        self.inner.clear_reference()
+        self.inner.clear_reference();
+        // Drop the captured graph as well — clear_reference signals an
+        // intentional cache break, so we toss the captured pipeline
+        // too. Next compute_batch_with_reference will recapture.
+        self.compute_graph = None;
     }
 
     #[inline]
@@ -169,18 +191,20 @@ impl ButteraugliBatch {
     /// `distorted_bytes` must be a tightly packed sequence of N
     /// `width*height*3` byte images in sRGB u8 RGB layout.
     /// Returns one score per image in order.
+    ///
+    /// The first call captures the full compute pipeline (everything
+    /// from `srgb_to_linear_batch` through `max_reduce_batch`) into a
+    /// CUDA graph and replays it on every subsequent call. The H2D
+    /// upload of `distorted_bytes` stays outside the graph because the
+    /// host source pointer changes per call. At N=8, 512×512 this
+    /// drops the ~75 per-call kernel launches down to one graph replay.
     pub fn compute_batch_with_reference(
         &mut self,
         distorted_bytes: &[u8],
     ) -> Result<Vec<f32>, Error> {
         let n = self.batch_size;
-        let batch = n as u32;
         let w = self.inner.width;
         let h = self.inner.height;
-        let plane = self.inner.size;
-        let half_w = self.inner.half_width;
-        let half_h = self.inner.half_height;
-        let half_plane = self.inner.half_size;
 
         let expected_bytes = w * h * 3 * n;
         if distorted_bytes.len() != expected_bytes {
@@ -200,6 +224,7 @@ impl ButteraugliBatch {
         }
 
         // Upload: one H2D copy that lands a tall-stacked Image<u8,C<3>>.
+        // OUTSIDE the graph — the source Vec<u8> rotates between calls.
         {
             let stream_inner = self.inner.stream.inner() as _;
             self.dis_staging
@@ -207,58 +232,36 @@ impl ButteraugliBatch {
                 .map_err(|e| Error::Npp(format!("{:?}", e)))?;
         }
 
-        // Grab Image pitches + raw pointers up front so we don't need
-        // &mut self.linear2_batch across other &self operations.
-        let dis_pitch = self.dis_staging.pitch() as usize;
-        let lin2_pitch = self.linear2_batch.pitch() as usize;
-        let dis_src = self.dis_staging.device_ptr();
-        let lin2_dst = self.linear2_batch.device_ptr_mut();
-
-        // =================== Full-resolution pass ===================
-        self.run_distorted_pass_full(w, h, plane, batch, dis_src, dis_pitch, lin2_dst, lin2_pitch)?;
-
-        // =================== Half-res setup: copy per-image linear RGB ===================
-        for ch in 0..3 {
-            for i in 0..n {
-                // CuBox::ptr() is a u64 CUdeviceptr; offsets are bytes.
-                let slot_bytes = (i * half_plane * 4) as u64;
-                let dst = self.xyb2_batch[ch].ptr() + slot_bytes;
-                let src = self.linear_planar2_batch[ch].ptr() + slot_bytes;
-                unsafe {
-                    cuMemcpyAsync(dst, src, half_plane * 4, self.inner.stream.raw())
-                        .result()
-                        .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
-                }
-            }
+        // Lazy-capture the post-upload pipeline into a graph.
+        if self.compute_graph.is_none() {
+            self.inner
+                .stream
+                .begin_capture_thread_local()
+                .map_err(|e| Error::Cuda(format!("begin_capture: {:?}", e)))?;
+            let run_result = self.run_pipeline_after_upload();
+            let end_result = self
+                .inner
+                .stream
+                .end_capture()
+                .map_err(|e| Error::Cuda(format!("end_capture: {:?}", e)));
+            let graph = match (run_result, end_result) {
+                (Ok(()), Ok(g)) => g,
+                (Err(e), _) => return Err(e),
+                (_, Err(e)) => return Err(e),
+            };
+            let exec = graph
+                .instantiate()
+                .map_err(|e| Error::Cuda(format!("graph instantiate: {:?}", e)))?;
+            self.compute_graph = Some(exec);
         }
 
-        // =================== Half-resolution pass ===================
-        self.run_distorted_pass_half(half_w, half_h, half_plane, batch)?;
+        // Replay.
+        self.compute_graph
+            .as_ref()
+            .expect("graph set above")
+            .launch(&self.inner.stream)
+            .map_err(|e| Error::Cuda(format!("graph launch: {:?}", e)))?;
 
-        // =================== Combine full + half diffmaps ===================
-        self.inner.kernel.add_upsample_2x_batch(
-            &self.inner.stream,
-            Self::cptr(&self.diffmap_half_batch),
-            Self::mptr(&self.diffmap_batch),
-            half_w,
-            half_h,
-            w,
-            h,
-            half_plane,
-            plane,
-            0.5,
-            batch,
-        );
-
-        // =================== Per-image max reduction ===================
-        self.inner.kernel.max_reduce_batch(
-            &self.inner.stream,
-            Self::cptr(&self.diffmap_batch),
-            self.max_results.ptr() as *mut f32,
-            plane,
-            plane,
-            batch,
-        );
         self.inner
             .stream
             .sync()
@@ -276,6 +279,78 @@ impl ButteraugliBatch {
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
         }
         Ok(out_bits.into_iter().map(f32::from_bits).collect())
+    }
+
+    /// Everything from `srgb_to_linear_batch` through `max_reduce_batch`.
+    /// Designed to be graph-capturable: no CPU syncs, no synchronous
+    /// memcpys, every op goes on `self.inner.stream`. The H2D upload
+    /// of distorted bytes into `dis_staging` must be done by the
+    /// caller beforehand — that step cannot live inside the graph
+    /// because its host source pointer changes between invocations.
+    fn run_pipeline_after_upload(&self) -> Result<(), Error> {
+        let n = self.batch_size;
+        let batch = n as u32;
+        let w = self.inner.width;
+        let h = self.inner.height;
+        let plane = self.inner.size;
+        let half_w = self.inner.half_width;
+        let half_h = self.inner.half_height;
+        let half_plane = self.inner.half_size;
+
+        // Grab pitches + raw pointers — these are stable for the life
+        // of the ButteraugliBatch instance.
+        let dis_pitch = self.dis_staging.pitch() as usize;
+        let lin2_pitch = self.linear2_batch.pitch() as usize;
+        let dis_src = self.dis_staging.device_ptr();
+        // device_ptr_mut would require &mut self, but the underlying
+        // raw device address is stable and safe to reinterpret mut:
+        let lin2_dst = self.linear2_batch.device_ptr() as *mut f32;
+
+        // Full-resolution pass.
+        self.run_distorted_pass_full(w, h, plane, batch, dis_src, dis_pitch, lin2_dst, lin2_pitch)?;
+
+        // Copy per-image half-res linear RGB into the xyb2 slots.
+        for ch in 0..3 {
+            for i in 0..n {
+                let slot_bytes = (i * half_plane * 4) as u64;
+                let dst = self.xyb2_batch[ch].ptr() + slot_bytes;
+                let src = self.linear_planar2_batch[ch].ptr() + slot_bytes;
+                unsafe {
+                    cuMemcpyAsync(dst, src, half_plane * 4, self.inner.stream.raw())
+                        .result()
+                        .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+                }
+            }
+        }
+
+        // Half-resolution pass.
+        self.run_distorted_pass_half(half_w, half_h, half_plane, batch)?;
+
+        // Combine full + half diffmaps.
+        self.inner.kernel.add_upsample_2x_batch(
+            &self.inner.stream,
+            Self::cptr(&self.diffmap_half_batch),
+            Self::mptr(&self.diffmap_batch),
+            half_w,
+            half_h,
+            w,
+            h,
+            half_plane,
+            plane,
+            0.5,
+            batch,
+        );
+
+        // Per-image max reduction (writes into self.max_results).
+        self.inner.kernel.max_reduce_batch(
+            &self.inner.stream,
+            Self::cptr(&self.diffmap_batch),
+            self.max_results.ptr() as *mut f32,
+            plane,
+            plane,
+            batch,
+        );
+        Ok(())
     }
 
     /// Full-resolution distorted-side pass.
