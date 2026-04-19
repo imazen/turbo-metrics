@@ -149,6 +149,20 @@ impl CuStream {
         }
     }
 
+    /// Begin graph capture in thread-local mode so concurrent workers
+    /// on other threads are not serialized during the capture. This is
+    /// the right mode for capturing background-metric streams from
+    /// multi-threaded workers.
+    pub fn begin_capture_thread_local(&self) -> CuResult<()> {
+        unsafe {
+            cuStreamBeginCapture_v2(
+                self.0,
+                CUstreamCaptureMode_enum::CU_STREAM_CAPTURE_MODE_THREAD_LOCAL,
+            )
+            .result()
+        }
+    }
+
     pub fn is_capturing(&self) -> CuResult<bool> {
         let mut status = sys::CUstreamCaptureStatus::CU_STREAM_CAPTURE_STATUS_NONE;
         unsafe {
