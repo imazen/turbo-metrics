@@ -62,6 +62,10 @@ pub struct Kernel {
     add_upsample_2x_batch: CuFunction,
     malta_diff_map_batch: CuFunction,
     malta_diff_map_lf_batch: CuFunction,
+    malta_diff_map_batch_split_stride: CuFunction,
+    malta_diff_map_lf_batch_split_stride: CuFunction,
+    mask_to_error_mul_batch_split_stride: CuFunction,
+    broadcast_plane_batch: CuFunction,
     fuzzy_erosion_batch: CuFunction,
     max_reduce_f32_to_u32_batch: CuFunction,
 }
@@ -202,6 +206,18 @@ impl Kernel {
             malta_diff_map_lf_batch: module
                 .function_by_name("malta_diff_map_lf_batch_kernel")
                 .expect("malta_diff_map_lf_batch_kernel not found"),
+            malta_diff_map_batch_split_stride: module
+                .function_by_name("malta_diff_map_batch_split_stride_kernel")
+                .expect("malta_diff_map_batch_split_stride_kernel not found"),
+            malta_diff_map_lf_batch_split_stride: module
+                .function_by_name("malta_diff_map_lf_batch_split_stride_kernel")
+                .expect("malta_diff_map_lf_batch_split_stride_kernel not found"),
+            mask_to_error_mul_batch_split_stride: module
+                .function_by_name("mask_to_error_mul_batch_split_stride_kernel")
+                .expect("mask_to_error_mul_batch_split_stride_kernel not found"),
+            broadcast_plane_batch: module
+                .function_by_name("broadcast_plane_batch_kernel")
+                .expect("broadcast_plane_batch_kernel not found"),
             fuzzy_erosion_batch: module
                 .function_by_name("fuzzy_erosion_batch_kernel")
                 .expect("fuzzy_erosion_batch_kernel not found"),
@@ -1402,6 +1418,166 @@ impl Kernel {
                     kernel_params!(src, result as *mut u32, size, plane_stride,),
                 )
                 .expect("max_reduce_batch launch failed");
+        }
+    }
+
+    /// Batched Malta HF with separate strides for the reference and
+    /// distorted input buffers and the output. Passing `lum0_stride = 0`
+    /// broadcasts a single cached reference plane across all N batch
+    /// slots; `lum1_stride = out_stride = width * height` indexes N
+    /// distinct distorted planes and per-slot outputs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn malta_diff_map_batch_split_stride(
+        &self,
+        stream: &CuStream,
+        lum0: *const f32,
+        lum0_stride: usize,
+        lum1: *const f32,
+        lum1_stride: usize,
+        block_diff_ac: *mut f32,
+        out_stride: usize,
+        width: usize,
+        height: usize,
+        w_0gt1: f32,
+        w_0lt1: f32,
+        norm1: f32,
+        batch: u32,
+    ) {
+        const MULLI_HF: f64 = 0.39905817637;
+        const K_WEIGHT0: f64 = 0.5;
+        const K_WEIGHT1: f64 = 0.33;
+        const LEN2: f64 = 3.75 * 2.0 + 1.0;
+        let norm2_0gt1 =
+            (MULLI_HF * (K_WEIGHT0 * w_0gt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        let norm2_0lt1 =
+            (MULLI_HF * (K_WEIGHT1 * w_0lt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        unsafe {
+            self.malta_diff_map_batch_split_stride
+                .launch(
+                    &Self::batch_config_malta(width as u32, height as u32, batch),
+                    stream,
+                    kernel_params!(
+                        lum0,
+                        lum0_stride,
+                        lum1,
+                        lum1_stride,
+                        block_diff_ac,
+                        out_stride,
+                        width,
+                        height,
+                        norm2_0gt1,
+                        norm2_0lt1,
+                        norm1,
+                    ),
+                )
+                .expect("malta_diff_map_batch_split_stride launch failed");
+        }
+    }
+
+    /// Batched Malta LF with separate strides. See `malta_diff_map_batch_split_stride`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn malta_diff_map_lf_batch_split_stride(
+        &self,
+        stream: &CuStream,
+        lum0: *const f32,
+        lum0_stride: usize,
+        lum1: *const f32,
+        lum1_stride: usize,
+        block_diff_ac: *mut f32,
+        out_stride: usize,
+        width: usize,
+        height: usize,
+        w_0gt1: f32,
+        w_0lt1: f32,
+        norm1: f32,
+        batch: u32,
+    ) {
+        const MULLI_LF: f64 = 0.611612573796;
+        const K_WEIGHT0: f64 = 0.5;
+        const K_WEIGHT1: f64 = 0.33;
+        const LEN2: f64 = 3.75 * 2.0 + 1.0;
+        let norm2_0gt1 =
+            (MULLI_LF * (K_WEIGHT0 * w_0gt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        let norm2_0lt1 =
+            (MULLI_LF * (K_WEIGHT1 * w_0lt1 as f64).sqrt() / LEN2 * norm1 as f64) as f32;
+        unsafe {
+            self.malta_diff_map_lf_batch_split_stride
+                .launch(
+                    &Self::batch_config_malta(width as u32, height as u32, batch),
+                    stream,
+                    kernel_params!(
+                        lum0,
+                        lum0_stride,
+                        lum1,
+                        lum1_stride,
+                        block_diff_ac,
+                        out_stride,
+                        width,
+                        height,
+                        norm2_0gt1,
+                        norm2_0lt1,
+                        norm1,
+                    ),
+                )
+                .expect("malta_diff_map_lf_batch_split_stride launch failed");
+        }
+    }
+
+    /// Batched mask_to_error_mul with split strides. Pass
+    /// `blurred1_stride = 0` to broadcast a single reference blurred-mask
+    /// plane across N distorted planes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn mask_to_error_mul_batch_split_stride(
+        &self,
+        stream: &CuStream,
+        blurred1: *const f32,
+        blurred1_stride: usize,
+        blurred2: *const f32,
+        blurred2_stride: usize,
+        block_diff_ac: *mut f32,
+        out_stride: usize,
+        size: usize,
+        batch: u32,
+    ) {
+        unsafe {
+            self.mask_to_error_mul_batch_split_stride
+                .launch(
+                    &Self::batch_config_1d(size, batch),
+                    stream,
+                    kernel_params!(
+                        blurred1,
+                        blurred1_stride,
+                        blurred2,
+                        blurred2_stride,
+                        block_diff_ac,
+                        out_stride,
+                        size,
+                    ),
+                )
+                .expect("mask_to_error_mul_batch_split_stride launch failed");
+        }
+    }
+
+    /// Broadcast a single `size`-element source plane into N destination
+    /// slots laid out with `out_stride`. Used to seed `mask_batch` with
+    /// N copies of `ref_mask_final_*` before the batched `compute_diffmap`.
+    pub fn broadcast_plane_batch(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        dst: *mut f32,
+        out_stride: usize,
+        size: usize,
+        batch: u32,
+    ) {
+        unsafe {
+            self.broadcast_plane_batch
+                .launch(
+                    &Self::batch_config_1d(size, batch),
+                    stream,
+                    kernel_params!(src, dst, out_stride, size,),
+                )
+                .expect("broadcast_plane_batch launch failed");
         }
     }
 

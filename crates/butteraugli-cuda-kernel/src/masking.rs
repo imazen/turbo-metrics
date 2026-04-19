@@ -69,6 +69,56 @@ pub unsafe extern "ptx-kernel" fn mask_to_error_mul_kernel(
     *block_diff_ac.add(idx) = *block_diff_ac.add(idx) + MASK_TO_ERROR_MUL * diff * diff;
 }
 
+/// Batched mask_to_error_mul with split strides. `blurred1_stride = 0`
+/// broadcasts the single cached reference plane against N distorted
+/// planes. `blurred2_stride` and `out_stride` are normally `width*height`.
+/// gridDim.z = batch_size.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn mask_to_error_mul_batch_split_stride_kernel(
+    blurred1: *const f32,
+    blurred1_stride: usize,
+    blurred2: *const f32,
+    blurred2_stride: usize,
+    block_diff_ac: *mut f32,
+    out_stride: usize,
+    size: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    if idx >= size {
+        return;
+    }
+    let blurred1 = blurred1.add(b * blurred1_stride);
+    let blurred2 = blurred2.add(b * blurred2_stride);
+    let out = block_diff_ac.add(b * out_stride);
+    let diff = *blurred1.add(idx) - *blurred2.add(idx);
+    *out.add(idx) = *out.add(idx) + MASK_TO_ERROR_MUL * diff * diff;
+}
+
+/// Broadcast a single `size`-element source plane into N destination
+/// slots. `dst[b*out_stride + i] = src[i]` for every batch index
+/// `b ∈ [0, batch)`. Used to seed `mask_batch` with N copies of the
+/// cached `ref_mask_final_*` before the batched `compute_diffmap`.
+/// gridDim.z = batch_size.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn broadcast_plane_batch_kernel(
+    src: *const f32,
+    dst: *mut f32,
+    out_stride: usize,
+    size: usize,
+) {
+    let idx = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    if idx >= size {
+        return;
+    }
+    *dst.add(b * out_stride + idx) = *src.add(idx);
+}
+
 /// Precompute diff values for masking
 /// Applies sqrt(mul * |x| + bias) - sqrt(bias)
 #[unsafe(no_mangle)]

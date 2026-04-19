@@ -725,3 +725,125 @@ pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_batch_kernel(
     let out_idx = y * width + x;
     *out.add(out_idx) += result;
 }
+
+/// Batched Malta HF with separate strides for the two input buffers and
+/// output. Passing `lum0_stride = 0` makes the kernel read the same
+/// reference plane for every batch index — this is how we broadcast a
+/// single cached reference against N distorted variants in one launch.
+/// `lum1_stride` and `out_stride` are normally `width * height`.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn malta_diff_map_batch_split_stride_kernel(
+    lum0: *const f32,
+    lum0_stride: usize,
+    lum1: *const f32,
+    lum1_stride: usize,
+    block_diff_ac: *mut f32,
+    out_stride: usize,
+    width: usize,
+    height: usize,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
+    norm1: f32,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    let tx = core::arch::nvptx::_thread_idx_x() as usize;
+    let ty = core::arch::nvptx::_thread_idx_y() as usize;
+    let bx = core::arch::nvptx::_block_idx_x() as usize;
+    let by = core::arch::nvptx::_block_idx_y() as usize;
+
+    let x = bx * TILE_SIZE + tx;
+    let y = by * TILE_SIZE + ty;
+
+    let lum0 = lum0.add(b * lum0_stride);
+    let lum1 = lum1.add(b * lum1_stride);
+    let out = block_diff_ac.add(b * out_stride);
+
+    let topleftx = (bx * TILE_SIZE) as isize - HALO as isize;
+    let toplefty = (by * TILE_SIZE) as isize - HALO as isize;
+    let serial_idx = tx + ty * TILE_SIZE;
+    let serial_stride = TILE_SIZE * TILE_SIZE;
+
+    let mut i = serial_idx;
+    while i < SHARED_TOTAL {
+        let work_x = topleftx + (i % SHARED_SIZE) as isize;
+        let work_y = toplefty + (i / SHARED_SIZE) as isize;
+        if work_x < 0 || work_x >= width as isize || work_y < 0 || work_y >= height as isize {
+            *MALTA_DIFFS.as_mut_ptr().add(i) = 0.0;
+        } else {
+            let global_idx = work_y as usize * width + work_x as usize;
+            let l0 = *lum0.add(global_idx);
+            let l1 = *lum1.add(global_idx);
+            *MALTA_DIFFS.as_mut_ptr().add(i) = compute_diff(l0, l1, norm1, norm2_0gt1, norm2_0lt1);
+        }
+        i += serial_stride;
+    }
+    core::arch::nvptx::_syncthreads();
+    if x >= width || y >= height {
+        return;
+    }
+    let shared_pos = (ty + HALO) * SHARED_SIZE + (tx + HALO);
+    let result = malta_unit(MALTA_DIFFS.as_ptr().add(shared_pos), SHARED_SIZE as isize);
+    let out_idx = y * width + x;
+    *out.add(out_idx) += result;
+}
+
+/// Batched Malta LF with separate strides (see the HF variant for
+/// rationale). Pass `lum0_stride = 0` to broadcast a single reference.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn malta_diff_map_lf_batch_split_stride_kernel(
+    lum0: *const f32,
+    lum0_stride: usize,
+    lum1: *const f32,
+    lum1_stride: usize,
+    block_diff_ac: *mut f32,
+    out_stride: usize,
+    width: usize,
+    height: usize,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
+    norm1: f32,
+) {
+    let b = core::arch::nvptx::_block_idx_z() as usize;
+    let tx = core::arch::nvptx::_thread_idx_x() as usize;
+    let ty = core::arch::nvptx::_thread_idx_y() as usize;
+    let bx = core::arch::nvptx::_block_idx_x() as usize;
+    let by = core::arch::nvptx::_block_idx_y() as usize;
+
+    let x = bx * TILE_SIZE + tx;
+    let y = by * TILE_SIZE + ty;
+
+    let lum0 = lum0.add(b * lum0_stride);
+    let lum1 = lum1.add(b * lum1_stride);
+    let out = block_diff_ac.add(b * out_stride);
+
+    let topleftx = (bx * TILE_SIZE) as isize - HALO as isize;
+    let toplefty = (by * TILE_SIZE) as isize - HALO as isize;
+    let serial_idx = tx + ty * TILE_SIZE;
+    let serial_stride = TILE_SIZE * TILE_SIZE;
+
+    let mut i = serial_idx;
+    while i < SHARED_TOTAL {
+        let work_x = topleftx + (i % SHARED_SIZE) as isize;
+        let work_y = toplefty + (i / SHARED_SIZE) as isize;
+        if work_x < 0 || work_x >= width as isize || work_y < 0 || work_y >= height as isize {
+            *MALTA_DIFFS.as_mut_ptr().add(i) = 0.0;
+        } else {
+            let global_idx = work_y as usize * width + work_x as usize;
+            let l0 = *lum0.add(global_idx);
+            let l1 = *lum1.add(global_idx);
+            *MALTA_DIFFS.as_mut_ptr().add(i) = compute_diff(l0, l1, norm1, norm2_0gt1, norm2_0lt1);
+        }
+        i += serial_stride;
+    }
+    core::arch::nvptx::_syncthreads();
+    if x >= width || y >= height {
+        return;
+    }
+    let shared_pos = (ty + HALO) * SHARED_SIZE + (tx + HALO);
+    let result = malta_unit_lf(
+        (MALTA_DIFFS.as_ptr() as *const f32).add(shared_pos),
+        SHARED_SIZE as isize,
+    );
+    let out_idx = y * width + x;
+    *out.add(out_idx) += result;
+}
