@@ -224,9 +224,38 @@ impl Dssim {
         dis_srgb: &Image<u8, C<3>>,
         stream: &CuStream,
     ) -> Result<f64> {
+        self.compute_sync_inner(Some(ref_srgb), dis_srgb, stream)
+    }
+
+    /// Compute DSSIM with an already-cached reference. The caller must have
+    /// previously called `compute_sync` (or a future set-reference helper)
+    /// with the same reference srgb buffer — the linear RGB at scale 0
+    /// is assumed to be stable on-device between calls.
+    ///
+    /// NOTE: this currently still re-runs reference-side downscale / LAB
+    /// conversion / pre-blur at each scale. The real win here is the
+    /// skipped H2D of the reference srgb buffer and the scale-0
+    /// srgb_to_linear kernel. A future refactor can cache ref_l/ref_a/
+    /// ref_b/ref_mu/ref_sq_blur per scale to skip ~100 kernels.
+    pub fn compute_sync_dis_only(
+        &mut self,
+        dis_srgb: &Image<u8, C<3>>,
+        stream: &CuStream,
+    ) -> Result<f64> {
+        self.compute_sync_inner(None, dis_srgb, stream)
+    }
+
+    fn compute_sync_inner(
+        &mut self,
+        ref_srgb: Option<&Image<u8, C<3>>>,
+        dis_srgb: &Image<u8, C<3>>,
+        stream: &CuStream,
+    ) -> Result<f64> {
         // Stage 1: sRGB -> Linear RGB (into scale 0's RGB buffers)
-        self.kernel
-            .srgb_to_linear(stream, ref_srgb, &mut self.scales[0].linear_rgb_ref);
+        if let Some(ref_srgb) = ref_srgb {
+            self.kernel
+                .srgb_to_linear(stream, ref_srgb, &mut self.scales[0].linear_rgb_ref);
+        }
         self.kernel
             .srgb_to_linear(stream, dis_srgb, &mut self.scales[0].linear_rgb_dis);
 

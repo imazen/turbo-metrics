@@ -376,6 +376,38 @@ impl Butteraugli {
         (self.width as u32, self.height as u32)
     }
 
+    /// Read-only access to the internal compute stream. Useful for callers
+    /// that want to time pipeline stages with external events or insert
+    /// barriers. DO NOT use this to enqueue extra work into the stream —
+    /// all internal ordering assumes we own the stream exclusively.
+    pub fn stream(&self) -> &CuStream {
+        &self.stream
+    }
+
+    /// Copy the current diffmap off-device into `dst`. Intended for
+    /// per-stage profiling (combined with `stream().sync()` beforehand).
+    /// `dst.len()` must equal `self.dimensions().0 * self.dimensions().1`
+    /// elements.
+    pub fn copy_diffmap_to(&self, dst: &mut [f32]) -> Result<(), Error> {
+        if dst.len() != self.size {
+            return Err(Error::InvalidDimensions(format!(
+                "diffmap copy expects {} elements, got {}",
+                self.size,
+                dst.len()
+            )));
+        }
+        unsafe {
+            cudarse_driver::sys::cuMemcpyDtoH_v2(
+                dst.as_mut_ptr() as *mut _,
+                self.diffmap.ptr(),
+                self.size * 4,
+            )
+            .result()
+            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+        }
+        Ok(())
+    }
+
     /// Helper to get raw pointer from CuBox
     fn ptr(buf: &CuBox<[f32]>) -> *const f32 {
         buf.ptr() as *const f32

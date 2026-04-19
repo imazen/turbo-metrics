@@ -247,6 +247,47 @@ impl Ssimulacra2 {
         self.compute_srgb_sync(tmp_ref, tmp_dis, src_ref_linear, src_dis_linear, stream)
     }
 
+    /// Upload distorted bytes + sRGB->linear conversion, then run the full
+    /// ssimulacra2 pipeline. The caller must have already populated
+    /// `src_ref_linear` with the linear RGB of the reference (e.g. via
+    /// a prior call that set up the reference, or by calling
+    /// `srgb_to_linear` directly using the kernel accessor).
+    ///
+    /// This is the cached-reference fast path: skips reference H2D +
+    /// srgb_to_linear, saving both the upload time and the reference
+    /// side of the conversion kernel.
+    pub fn compute_from_cpu_dis_only_srgb_sync(
+        &mut self,
+        dis_bytes: &[u8],
+        mut tmp_dis: impl ImgMut<u8, C<3>>,
+        src_dis_linear: impl ImgMut<f32, C<3>>,
+        stream: &CuStream,
+    ) -> Result<f64> {
+        tmp_dis.copy_from_cpu(dis_bytes, stream.inner() as _)?;
+        // Reference linear is already on device; only process distorted.
+        self.kernel.srgb_to_linear(stream, tmp_dis, src_dis_linear);
+        // The captured graph is bound to the same src_ref_linear /
+        // src_dis_linear pointers it was recorded with. The caller must
+        // preserve those buffers across calls.
+        self.compute_sync(stream)
+    }
+
+    /// Convenience: run sRGB->linear for the reference and cache it in
+    /// place in `src_ref_linear`. Intended to be called once per new
+    /// reference before a sequence of `compute_from_cpu_dis_only_srgb_sync`
+    /// calls.
+    pub fn prepare_reference_from_cpu_srgb(
+        &self,
+        ref_bytes: &[u8],
+        mut tmp_ref: impl ImgMut<u8, C<3>>,
+        src_ref_linear: impl ImgMut<f32, C<3>>,
+        stream: &CuStream,
+    ) -> Result<()> {
+        tmp_ref.copy_from_cpu(ref_bytes, stream.inner() as _)?;
+        self.kernel.srgb_to_linear(stream, tmp_ref, src_ref_linear);
+        Ok(())
+    }
+
     /// Compute ssimulacra2 metric using images already in CUDA memory.
     /// Reference and distorted images must be copied to the [ref_input] and [dis_input] fields.
     /// This will block until CUDA is done to post process scores as that last part is done on the CPU.
