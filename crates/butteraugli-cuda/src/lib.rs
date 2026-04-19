@@ -22,6 +22,8 @@
 //! ```
 
 mod kernel;
+pub mod batch;
+pub use batch::ButteraugliBatch;
 
 use cudarse_driver::{CuBox, CuStream};
 use cudarse_npp::image::isu::Malloc;
