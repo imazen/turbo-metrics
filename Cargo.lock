@@ -2185,6 +2185,7 @@ dependencies = [
 name = "zensim-cuda"
 version = "0.1.0"
 dependencies = [
+ "array-init",
  "cudarse-driver",
  "cudarse-npp",
  "nvptx-builder",
