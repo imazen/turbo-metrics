@@ -17,3 +17,4 @@ mod blur;
 mod color;
 mod downscale;
 mod features;
+mod pad;

@@ -13,6 +13,7 @@ pub struct Kernel {
     fused_blur_h_ssim: CuFunction,
     fused_vblur_features_ssim: CuFunction,
     downscale_2x_plane: CuFunction,
+    pad_mirror_plane: CuFunction,
 }
 
 impl Kernel {
@@ -36,6 +37,9 @@ impl Kernel {
             downscale_2x_plane: module
                 .function_by_name("downscale_2x_plane_kernel")
                 .expect("downscale_2x_plane_kernel not found"),
+            pad_mirror_plane: module
+                .function_by_name("pad_mirror_plane_kernel")
+                .expect("pad_mirror_plane_kernel not found"),
             _module: module,
         }
     }
@@ -175,6 +179,52 @@ impl Kernel {
                     ),
                 )
                 .expect("downscale_2x_plane launch failed");
+        }
+    }
+
+    /// Fill padding cols `[logical_w..padded_w)` with mirror-reflected
+    /// copies of real cols. `mirror_offsets` is a device pointer to
+    /// `padded_w - logical_w` u32 values (source-col lookup table).
+    /// No-op if `padded_w == logical_w`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pad_mirror_plane(
+        &self,
+        stream: &CuStream,
+        plane: *mut f32,
+        pitch: usize,
+        logical_w: usize,
+        padded_w: usize,
+        height: usize,
+        mirror_offsets: *const u32,
+    ) {
+        if padded_w == logical_w {
+            return;
+        }
+        let pad_count = (padded_w - logical_w) as u32;
+        const TX: u32 = 16;
+        const TY: u32 = 16;
+        let bx = (pad_count + TX - 1) / TX;
+        let by = (height as u32 + TY - 1) / TY;
+        let cfg = LaunchConfig {
+            grid_dim: (bx, by, 1),
+            block_dim: (TX, TY, 1),
+            shared_mem_bytes: 0,
+        };
+        unsafe {
+            self.pad_mirror_plane
+                .launch(
+                    &cfg,
+                    stream,
+                    kernel_params!(
+                        plane,
+                        pitch,
+                        logical_w,
+                        padded_w,
+                        height,
+                        mirror_offsets,
+                    ),
+                )
+                .expect("pad_mirror_plane launch failed");
         }
     }
 }
