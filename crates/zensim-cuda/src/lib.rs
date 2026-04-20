@@ -353,12 +353,16 @@ impl Zensim {
                 source_rgb.len()
             )));
         }
-        // Reference buffer pointers are stable across set_reference
-        // calls, so the compute graph (keyed on dis+ref pointers)
-        // doesn't technically need invalidation. But dropping here is
-        // defensive: if a future change rotates ref buffers, the graph
-        // would silently stage against stale pointers. Cheap to drop.
-        self.compute_graph = None;
+        // Do NOT drop self.compute_graph here: the graph is keyed on
+        // `(ref_xyb_ptr, dis_u8_ptr)` and those pointers are stable
+        // across set_reference calls (set_reference only writes new
+        // *contents* into the same pre-allocated buffers). If we
+        // dropped it, every set_reference would force a graph
+        // re-capture on the next compute_with_reference — defeating
+        // the entire point of the graph when the caller rotates
+        // sources. Instead, we rely on the pointer-pair check in
+        // compute_with_reference_inner to decide when to recapture,
+        // and on `clear_reference` to explicitly drop it.
 
         self.ref_u8
             .copy_from_cpu(source_rgb, self.stream.inner() as _)
@@ -443,14 +447,18 @@ impl Zensim {
         let ref_ptr = self.scales[0].xyb_ref[0].device_ptr() as u64;
         let dis_ptr = self.dis_u8.device_ptr() as u64;
         let need_capture = match &self.compute_graph {
-            Some((cached_ref, cached_dis, _)) => {
-                *cached_ref != ref_ptr || *cached_dis != dis_ptr
-            }
+            Some((cached_ref, cached_dis, _)) => *cached_ref != ref_ptr || *cached_dis != dis_ptr,
             None => true,
         };
 
         if need_capture {
             self.compute_graph = None;
+            if std::env::var_os("ZENSIM_GRAPH_DEBUG").is_some() {
+                eprintln!(
+                    "zensim: capturing graph (ref_ptr={:x}, dis_ptr={:x})",
+                    ref_ptr, dis_ptr
+                );
+            }
             self.stream
                 .begin_capture_thread_local()
                 .map_err(|e| Error::Cuda(format!("begin_capture: {:?}", e)))?;
