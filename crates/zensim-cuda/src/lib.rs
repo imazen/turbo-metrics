@@ -37,10 +37,17 @@ pub const FEATURES_PER_CHANNEL_BASIC: usize = 13;
 /// (max + L8-pooled p95): 6 features.
 pub const FEATURES_PER_CHANNEL_PEAKS: usize = 6;
 
-/// Blur radius at scale 0. CPU zensim defaults to radius=3 (diam=7)
-/// for the standard `latest` profile with `blur_passes=1`. We mirror
-/// that here; higher-radius profiles can override in a follow-up.
-pub const BLUR_RADIUS: usize = 3;
+/// Blur radius for the V0.1/V0.2 profiles. CPU zensim's
+/// `PROFILE_PREVIEW_V0_{1,2}.blur_radius` is **5** (diameter = 11) —
+/// the `WEIGHTS_PREVIEW_V0_2` table this crate scores against was
+/// trained at that radius, so any other value produces features that
+/// don't pair with the weights (`hf_*` ratios drift catastrophically —
+/// a radius-3 pipeline gives `ratio_l2 ≈ 0.46` on a 512² Q=90 JPEG,
+/// whereas CPU's radius-5 pipeline gives `ratio_l2 ≈ 0.61`). The prior
+/// value (`3`) was a miscount and caused a consistent score gap of
+/// ~3.7 points vs CPU zensim. See
+/// `zen/zensim/zensim/src/profile.rs` lines 92-108.
+pub const BLUR_RADIUS: usize = 5;
 
 #[derive(Debug)]
 pub enum Error {
