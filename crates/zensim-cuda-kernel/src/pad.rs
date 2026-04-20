@@ -31,8 +31,7 @@ pub unsafe extern "ptx-kernel" fn pad_mirror_plane_kernel(
     let pad_col = core::arch::nvptx::_block_idx_x() as usize
         * core::arch::nvptx::_block_dim_x() as usize
         + core::arch::nvptx::_thread_idx_x() as usize;
-    let y = core::arch::nvptx::_block_idx_y() as usize
-        * core::arch::nvptx::_block_dim_y() as usize
+    let y = core::arch::nvptx::_block_idx_y() as usize * core::arch::nvptx::_block_dim_y() as usize
         + core::arch::nvptx::_thread_idx_y() as usize;
     let pad_count = padded_w - logical_w;
     if pad_col >= pad_count || y >= height {

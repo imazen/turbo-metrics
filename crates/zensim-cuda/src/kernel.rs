@@ -215,14 +215,7 @@ impl Kernel {
                 .launch(
                     &cfg,
                     stream,
-                    kernel_params!(
-                        plane,
-                        pitch,
-                        logical_w,
-                        padded_w,
-                        height,
-                        mirror_offsets,
-                    ),
+                    kernel_params!(plane, pitch, logical_w, padded_w, height, mirror_offsets,),
                 )
                 .expect("pad_mirror_plane launch failed");
         }

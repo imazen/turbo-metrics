@@ -224,7 +224,11 @@ impl Zensim {
                 let host: Vec<u32> = (0..pad_count)
                     .map(|i| {
                         let m = (logical_w as usize + i) % period;
-                        let off = if m < logical_w as usize { m } else { period - m };
+                        let off = if m < logical_w as usize {
+                            m
+                        } else {
+                            period - m
+                        };
                         off as u32
                     })
                     .collect();
@@ -250,9 +254,7 @@ impl Zensim {
             h = (h + 1) / 2;
         }
         // Ensure mirror-offset HtoD copies complete before any compute.
-        stream
-            .sync()
-            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+        stream.sync().map_err(|e| Error::Cuda(format!("{:?}", e)))?;
 
         let ref_u8 =
             Image::<u8, C<3>>::malloc(width, height).map_err(|e| Error::Npp(format!("{:?}", e)))?;
@@ -312,13 +314,7 @@ impl Zensim {
         source_rgb: &[u8],
         distorted_rgb: &[u8],
         return_raw: bool,
-    ) -> Result<
-        (
-            [f64; TOTAL_FEATURES],
-            Vec<Vec<([f64; 17], [u32; 3])>>,
-        ),
-        Error,
-    > {
+    ) -> Result<([f64; TOTAL_FEATURES], Vec<Vec<([f64; 17], [u32; 3])>>), Error> {
         let expected = (self.width as usize) * (self.height as usize) * 3;
         if source_rgb.len() != expected || distorted_rgb.len() != expected {
             return Err(Error::InvalidDimensions(format!(
