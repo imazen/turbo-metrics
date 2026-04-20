@@ -486,11 +486,13 @@ impl Zensim {
             .launch(&self.stream)
             .map_err(|e| Error::Cuda(format!("graph launch: {:?}", e)))?;
 
-        // Sync + D2H collect per-scale per-channel accumulators.
-        self.stream
-            .sync()
-            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
-
+        // D2H is done asynchronously on the same stream as the graph
+        // launch, so the 8 per-scale copies (f64 accumulator + u32 peak
+        // per scale × 4 scales) pipeline behind the graph without a
+        // blocking round trip each. `collect_features` issues them on
+        // the stream and syncs once at the end — that single sync cuts
+        // warm-path cost from ~8 ms (blocking cuMemcpyDtoH_v2 × 8) to
+        // kernel-compute + 1 synchronisation.
         self.collect_features(return_raw)
     }
 
@@ -711,24 +713,41 @@ impl Zensim {
             Vec::new()
         };
 
+        // Pre-stage one host-side buffer per type spanning ALL scales,
+        // so we issue 2*n_scales async D2H copies then sync once. The
+        // blocking per-scale version was ~7ms of our 8ms warm path.
+        let mut host_f64_all = vec![0.0_f64; 17 * 3 * n_scales];
+        let mut host_u32_all = vec![0_u32; 3 * 3 * n_scales];
         for s in 0..n_scales {
             let sc = &self.scales[s];
             unsafe {
-                cudarse_driver::sys::cuMemcpyDtoH_v2(
-                    host_f64.as_mut_ptr() as *mut _,
+                cudarse_driver::sys::cuMemcpyDtoHAsync_v2(
+                    host_f64_all.as_mut_ptr().add(s * 17 * 3) as *mut _,
                     sc.accum_f64.ptr(),
                     17 * 3 * 8,
+                    self.stream.inner() as _,
                 )
                 .result()
                 .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
-                cudarse_driver::sys::cuMemcpyDtoH_v2(
-                    host_u32.as_mut_ptr() as *mut _,
+                cudarse_driver::sys::cuMemcpyDtoHAsync_v2(
+                    host_u32_all.as_mut_ptr().add(s * 3 * 3) as *mut _,
                     sc.peak_u32.ptr(),
                     3 * 3 * 4,
+                    self.stream.inner() as _,
                 )
                 .result()
                 .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
             }
+        }
+        // Single round-trip sync: waits for graph + all 2*n_scales D2H.
+        self.stream
+            .sync()
+            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+
+        for s in 0..n_scales {
+            host_f64.copy_from_slice(&host_f64_all[s * 17 * 3..(s + 1) * 17 * 3]);
+            host_u32.copy_from_slice(&host_u32_all[s * 3 * 3..(s + 1) * 3 * 3]);
+            let sc = &self.scales[s];
             // Feature-sum denominator must match CPU's `accum.n`, which
             // is `padded_w × h` (streaming.rs line 1379). GPU sums over
             // the same footprint.
