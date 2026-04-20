@@ -166,10 +166,18 @@ impl ScratchBuffer {
 
 impl Drop for ScratchBuffer {
     fn drop(&mut self) {
-        unsafe {
-            cudaFreeAsync(self.ptr, get_stream())
-                .result()
-                .expect("Could not free a scratch buffer");
+        // Drop must never panic — a panic during stack unwinding from a
+        // sibling alloc failure would abort the whole process. If the
+        // context is in a sticky error state, we log and leak rather than
+        // escalating the error into a SIGABRT. Same rationale as the
+        // `Image` Drop impl.
+        let status = unsafe { cudaFreeAsync(self.ptr, get_stream()) };
+        if let Err(e) = status.result() {
+            eprintln!(
+                "[cudarse-npp] ScratchBuffer({} B) drop: cudaFreeAsync failed ({:?}); leaking. \
+                 Usually a sticky context error from a prior CUDA failure.",
+                self.len, e,
+            );
         }
     }
 }

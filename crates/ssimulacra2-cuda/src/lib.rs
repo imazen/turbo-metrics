@@ -6,7 +6,7 @@ use cudarse_npp::image::idei::Transpose;
 use cudarse_npp::image::ist::Sum;
 use cudarse_npp::image::isu::Malloc;
 use cudarse_npp::image::{C, Image, Img, ImgMut};
-use cudarse_npp::sys::{NppStreamContext, NppiRect, Result};
+use cudarse_npp::sys::{Error as NppError, NppStatus, NppStreamContext, NppiRect, Result};
 use cudarse_npp::{ScratchBuffer, assert_same_size, get_stream_ctx};
 
 use crate::kernel::Kernel;
@@ -85,6 +85,50 @@ impl Ssimulacra2 {
         assert_same_size!(src_ref_linear, src_dis_linear);
         let rect = src_ref_linear.rect();
 
+        // Pre-flight memory check. If we're going to OOM, better to find
+        // out now and return an ordinary `Err` than to fail mid-
+        // construction with a panic — the in-flight allocations would then
+        // hit `.unwrap()` in their Drop impls against a sticky-OOM context,
+        // and "panic during unwind" aborts the process. Returning early
+        // keeps that cascade from ever starting.
+        //
+        // Budget: ≈ 400 B per source pixel for the 10 img + 10 imgt buffers
+        // per scale plus the 4 reference-cache tensors summed over all 6
+        // scales (the original `mem_usage` docstring says 270 but predates
+        // the reference cache). Add a 25% margin for driver + PTX overhead
+        // and NPP scratch growth. Too large a margin spuriously refuses
+        // sources that would have fit; too small risks the abort cascade
+        // we're trying to avoid.
+        let pixels = (rect.width as u64) * (rect.height as u64);
+        let estimate_bytes = pixels.saturating_mul(500);
+        if let Ok((free_bytes, _total)) = cudarse_driver::mem_info() {
+            if (free_bytes as u64) < estimate_bytes {
+                // Report as NPP_MEMORY_ALLOCATION_ERR so it flows through the
+                // existing error-handling path (`?`) identically to a mid-
+                // allocation OOM from NPP. The caller's `Err(e) => continue`
+                // match catches it.
+                return Err(NppError::from(NppStatus::NPP_MEMORY_ALLOCATION_ERR));
+            }
+        }
+
+        // Load the kernel module FIRST, before any streams or big
+        // allocations. `CuModule::load_ptx` needs a few MB of device memory;
+        // if it OOMs, `Kernel::load` panics (the CuModule API is infallible-
+        // by-default). By hoisting it to the top, a panic here has nothing
+        // on the stack to drop — no streams, no images, no scratch buffers —
+        // so any panic propagates cleanly out of `new` instead of aborting
+        // the process mid-Drop-cascade.
+        //
+        // We still catch_unwind to convert a panic into a clean Err so the
+        // caller's skip-this-source path works the same way as a mid-alloc
+        // OOM.
+        let kernel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(Kernel::load)) {
+            Ok(k) => k,
+            Err(_) => {
+                return Err(NppError::from(NppStatus::NPP_MEMORY_ALLOCATION_ERR));
+            }
+        };
+
         let streams =
             array_init::try_array_init(|_| array_init::try_array_init(|_| CuStream::new()))
                 .unwrap();
@@ -127,7 +171,7 @@ impl Ssimulacra2 {
         let mu1_t_cache = array_init::try_array_init(|i| imgt[i][0].malloc_same_size())?;
 
         let mut s = Self {
-            kernel: Kernel::load(),
+            kernel,
             npp,
             exec: None,
             // sizes,

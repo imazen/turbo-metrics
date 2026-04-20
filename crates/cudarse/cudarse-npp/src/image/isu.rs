@@ -94,7 +94,24 @@ malloc_planar_impl!(f32, 4);
 
 impl<S: Sample, C: Channels> Drop for Image<S, C> {
     fn drop(&mut self) {
-        self.inner_drop(get_stream()).unwrap();
+        // Drop must never panic — otherwise a panic during stack unwinding
+        // (e.g. an OOM in a later allocation in the same function) would be
+        // a "panic during panic" and abort the whole process. That used to
+        // cascade from a single `cudaMalloc` failure into an unrecoverable
+        // crash partway through long `Ssimulacra2` runs (coefficient#ssim2).
+        //
+        // If the context is already in a sticky error state (e.g. OOM),
+        // `cudaFreeAsync` will return the same error. In that case we just
+        // log and leak — we have no way to recover the allocation, and we
+        // don't want to escalate a recoverable bubble-up error into a SIGABRT.
+        if let Err(e) = self.inner_drop(get_stream()) {
+            eprintln!(
+                "[cudarse-npp] Image<{}x{}> drop: cudaFreeAsync failed ({:?}); leaking the allocation. \
+                 This usually means the CUDA context hit a prior error (e.g. OOM) \
+                 and every subsequent call returns it.",
+                self.width, self.height, e,
+            );
+        }
     }
 }
 
