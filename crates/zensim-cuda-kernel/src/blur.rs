@@ -13,10 +13,15 @@ use nvptx_std::math::StdMathExt;
 /// Box running-sum H-blur producing 4 outputs per pixel.
 ///
 /// For each pixel (x, y):
-///   h_mu1[x,y]      = sum_k src[x+k-r, y]      / diam
-///   h_mu2[x,y]      = sum_k dst[x+k-r, y]      / diam
-///   h_sigma_sq[x,y] = sum_k src[x+k-r, y]²     / diam
-///   h_sigma12[x,y]  = sum_k src[x+k-r,y]*dst[x+k-r,y] / diam
+///   h_mu1[x,y]      = sum_k src[x+k-r, y]                 / diam
+///   h_mu2[x,y]      = sum_k dst[x+k-r, y]                 / diam
+///   h_sigma_sq[x,y] = sum_k (src[x+k-r,y]² + dst[x+k-r,y]²) / diam
+///   h_sigma12[x,y]  = sum_k src[x+k-r,y] * dst[x+k-r,y]   / diam
+///
+/// NB: `h_sigma_sq` carries the sum of *both* E[s²]+E[d²] so the V-blur
+/// SSIM denominator `ssq - mu1² - mu2² + C2 = var_s + var_d + C2` is
+/// non-negative. Accumulating only `s*s` here makes denom_s negative
+/// whenever mu2 is dominant, exploding the ratio.
 ///
 /// Boundary uses mirror reflection (CPU zensim convention).
 /// One thread per (x, y). Grid = ceil(width / 32) × ceil(height / 8).
@@ -71,7 +76,10 @@ pub unsafe extern "ptx-kernel" fn fused_blur_h_ssim_kernel(
         let d = *dst_row.add(ix);
         sum_m1 += s;
         sum_m2 += d;
-        sum_sq = sum_sq + s * s;
+        // Sum of squared *both* planes — matches CPU
+        // `fused_blur_h_ssim_inner` (zen/zensim/src/blur.rs line 1765):
+        //   sum_sq = s.mul_add(s, d.mul_add(d, sum_sq))
+        sum_sq = sum_sq + s * s + d * d;
         sum_s12 = sum_s12 + s * d;
     }
 

@@ -29,6 +29,14 @@ pub const FEATURES_PER_SCALE: usize = FEATURES_PER_CHANNEL * 3;
 /// Total features (4 scales × 57).
 pub const TOTAL_FEATURES: usize = FEATURES_PER_SCALE * SCALES;
 
+/// Basic ("scored") features per channel per scale — same as CPU
+/// `FEATURES_PER_CHANNEL_BASIC`: 13 mean/L2/L4-pooled features.
+pub const FEATURES_PER_CHANNEL_BASIC: usize = 13;
+
+/// Peak features per channel per scale — matches CPU layout pass 2
+/// (max + L8-pooled p95): 6 features.
+pub const FEATURES_PER_CHANNEL_PEAKS: usize = 6;
+
 /// Blur radius at scale 0. CPU zensim defaults to radius=3 (diam=7)
 /// for the standard `latest` profile with `blur_passes=1`. We mirror
 /// that here; higher-radius profiles can override in a follow-up.
@@ -331,27 +339,50 @@ impl Zensim {
             .sync()
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
 
-        // Layout of feature vector matches zensim CPU:
-        //   [scale 0: ch0 (19 feats), ch1 (19), ch2 (19),
-        //    scale 1: ch0, ch1, ch2,
-        //    ...]
-        // and the 19 features per channel come out of the kernel as:
-        //   accum_f64[0] = ssim_d   (divide by n_pixels → ssim_mean)
-        //   accum_f64[1] = ssim_d4
-        //   accum_f64[2] = ssim_d2
-        //   accum_f64[3..9]  = edge_art_{0,4,2}, edge_det_{0,4,2}
-        //   accum_f64[9]  = mse
-        //   accum_f64[10..14] = hf_sq_src, hf_sq_dst, hf_abs_src, hf_abs_dst
-        //   accum_f64[14..17] = ssim_d8, edge_art8, edge_det8
-        //   peak_u32[0..3]     = ssim_max, edge_art_max, edge_det_max
+        // Layout of feature vector must match zensim CPU's
+        // `combine_scores` (zen/zensim/src/metric.rs line 1641):
+        //   Pass 1 ("scored" block, 13/ch × 3ch × N scales = 156):
+        //     for each scale s: for each channel c:
+        //       [ssim_mean, ssim_4th, ssim_2nd,
+        //        art_mean, art_4th, art_2nd,
+        //        det_mean, det_4th, det_2nd,
+        //        mse, hf_energy_loss, hf_mag_loss, hf_energy_gain]
+        //       (all .abs(); HF ratios clamped to [0, 1] / [0, ∞))
+        //   Pass 2 ("peaks" block, 6/ch × 3ch × N = 72):
+        //     for each scale s: for each channel c:
+        //       [ssim_max, art_max, det_max,
+        //        ssim_p95, art_p95, det_p95]
+        //       (p95 here is the L8 root pool; see metric.rs line 1666)
         //
-        // Reduction to per-channel 19-feature vector matches zensim's
-        // `combine_scores` final pooling (mean, L^p root, HF ratios).
+        // Total: 228 for N=4 scales, matching WEIGHTS_PREVIEW_V0_2.
+        //
+        // Per-scale kernel accumulators (per channel):
+        //   accum_f64[0]  = Σ sd          (→ ssim_mean after /n)
+        //   accum_f64[1]  = Σ sd⁴         (→ ssim_4th = (·/n)^0.25)
+        //   accum_f64[2]  = Σ sd²         (→ ssim_2nd = (·/n)^0.5)
+        //   accum_f64[3]  = Σ artifact
+        //   accum_f64[4]  = Σ artifact⁴
+        //   accum_f64[5]  = Σ artifact²
+        //   accum_f64[6]  = Σ detail_lost
+        //   accum_f64[7]  = Σ detail_lost⁴
+        //   accum_f64[8]  = Σ detail_lost²
+        //   accum_f64[9]  = Σ (src-dst)²  (→ mse)
+        //   accum_f64[10] = Σ (src-mu1)²  (→ hf_L2_src for HF ratios)
+        //   accum_f64[11] = Σ (dst-mu2)²  (→ hf_L2_dst)
+        //   accum_f64[12] = Σ |src-mu1|   (→ hf_L1_src)
+        //   accum_f64[13] = Σ |dst-mu2|   (→ hf_L1_dst)
+        //   accum_f64[14] = Σ sd⁸         (→ ssim_p95 = (·/n)^0.125)
+        //   accum_f64[15] = Σ artifact⁸   (→ art_p95)
+        //   accum_f64[16] = Σ detail_lost⁸(→ det_p95)
+        //   peak_u32[0..3] = ssim_max, art_max, det_max
 
         let mut out = [0.0_f64; TOTAL_FEATURES];
         let mut host_f64 = vec![0.0_f64; 17 * 3];
         let mut host_u32 = vec![0_u32; 3 * 3];
-        for s in 0..self.scales.len() {
+        let n_scales = self.scales.len();
+        let basic_total = n_scales * FEATURES_PER_CHANNEL_BASIC * 3;
+
+        for s in 0..n_scales {
             let sc = &self.scales[s];
             unsafe {
                 cudarse_driver::sys::cuMemcpyDtoH_v2(
@@ -371,52 +402,48 @@ impl Zensim {
             }
             let n_pixels = (sc.w as usize) * (sc.h as usize);
             let inv_n = 1.0 / n_pixels as f64;
+
+            // HF ratio clamp matches CPU (metric.rs line 85-87): both
+            // `hf_energy_loss` and `hf_energy_gain` are `max(0, …)`.
+            let safe_ratio = |num: f64, den: f64| -> f64 {
+                if den.abs() > 0.0 { num / den } else { 0.0 }
+            };
+
             for ch in 0..3 {
                 let raw = &host_f64[ch * 17..ch * 17 + 17];
                 let peaks = &host_u32[ch * 3..ch * 3 + 3];
-                let scale_base = s * FEATURES_PER_SCALE + ch * FEATURES_PER_CHANNEL;
-                // 19-feature layout matches zensim's FEATURES_PER_CHANNEL_WITH_PEAKS:
-                //  0 ssim_mean   = raw[0] / n
-                //  1 ssim_4th    = (raw[1] / n).powf(0.25)
-                //  2 ssim_2nd    = (raw[2] / n).sqrt()
-                //  3 art_mean    = raw[3] / n
-                //  4 art_4th     = (raw[4] / n).powf(0.25)
-                //  5 art_2nd     = (raw[5] / n).sqrt()
-                //  6 det_mean    = raw[6] / n
-                //  7 det_4th     = (raw[7] / n).powf(0.25)
-                //  8 det_2nd     = (raw[8] / n).sqrt()
-                //  9 mse         = raw[9] / n
-                // 10 hf_loss     = 1 - raw[11]/raw[10]           (dst/src)
-                // 11 hf_mag_loss = 1 - raw[13]/raw[12]
-                // 12 hf_gain     = raw[11]/raw[10] - 1
-                // 13 ssim_max    = f32::from_bits(peaks[0])
-                // 14 art_max     = f32::from_bits(peaks[1])
-                // 15 det_max     = f32::from_bits(peaks[2])
-                // 16 ssim_l8     = (raw[14] / n).powf(0.125)
-                // 17 art_l8      = (raw[15] / n).powf(0.125)
-                // 18 det_l8      = (raw[16] / n).powf(0.125)
-                let safe_ratio = |num: f64, den: f64| -> f64 {
-                    if den.abs() > 0.0 { num / den } else { 0.0 }
-                };
-                out[scale_base] = raw[0] * inv_n;
-                out[scale_base + 1] = (raw[1] * inv_n).max(0.0).powf(0.25);
-                out[scale_base + 2] = (raw[2] * inv_n).max(0.0).sqrt();
-                out[scale_base + 3] = raw[3] * inv_n;
-                out[scale_base + 4] = (raw[4] * inv_n).max(0.0).powf(0.25);
-                out[scale_base + 5] = (raw[5] * inv_n).max(0.0).sqrt();
-                out[scale_base + 6] = raw[6] * inv_n;
-                out[scale_base + 7] = (raw[7] * inv_n).max(0.0).powf(0.25);
-                out[scale_base + 8] = (raw[8] * inv_n).max(0.0).sqrt();
-                out[scale_base + 9] = raw[9] * inv_n;
-                out[scale_base + 10] = 1.0 - safe_ratio(raw[11], raw[10]);
-                out[scale_base + 11] = 1.0 - safe_ratio(raw[13], raw[12]);
-                out[scale_base + 12] = safe_ratio(raw[11], raw[10]) - 1.0;
-                out[scale_base + 13] = f32::from_bits(peaks[0]) as f64;
-                out[scale_base + 14] = f32::from_bits(peaks[1]) as f64;
-                out[scale_base + 15] = f32::from_bits(peaks[2]) as f64;
-                out[scale_base + 16] = (raw[14] * inv_n).max(0.0).powf(0.125);
-                out[scale_base + 17] = (raw[15] * inv_n).max(0.0).powf(0.125);
-                out[scale_base + 18] = (raw[16] * inv_n).max(0.0).powf(0.125);
+
+                let ratio_l2 = safe_ratio(raw[11], raw[10]);
+                let ratio_l1 = safe_ratio(raw[13], raw[12]);
+
+                // Basic (scored) 13-feature block, scales-major, channel-minor.
+                let basic_base = s * 3 * FEATURES_PER_CHANNEL_BASIC
+                    + ch * FEATURES_PER_CHANNEL_BASIC;
+                out[basic_base] = (raw[0] * inv_n).abs();
+                out[basic_base + 1] = (raw[1] * inv_n).max(0.0).powf(0.25);
+                out[basic_base + 2] = (raw[2] * inv_n).max(0.0).sqrt();
+                out[basic_base + 3] = (raw[3] * inv_n).abs();
+                out[basic_base + 4] = (raw[4] * inv_n).max(0.0).powf(0.25);
+                out[basic_base + 5] = (raw[5] * inv_n).max(0.0).sqrt();
+                out[basic_base + 6] = (raw[6] * inv_n).abs();
+                out[basic_base + 7] = (raw[7] * inv_n).max(0.0).powf(0.25);
+                out[basic_base + 8] = (raw[8] * inv_n).max(0.0).sqrt();
+                out[basic_base + 9] = raw[9] * inv_n;
+                out[basic_base + 10] = (1.0 - ratio_l2).max(0.0);
+                out[basic_base + 11] = (1.0 - ratio_l1).max(0.0);
+                out[basic_base + 12] = (ratio_l2 - 1.0).max(0.0);
+
+                // Peaks 6-feature block, appended after the full basic
+                // region.
+                let peak_base = basic_total
+                    + s * 3 * FEATURES_PER_CHANNEL_PEAKS
+                    + ch * FEATURES_PER_CHANNEL_PEAKS;
+                out[peak_base] = f32::from_bits(peaks[0]) as f64;
+                out[peak_base + 1] = f32::from_bits(peaks[1]) as f64;
+                out[peak_base + 2] = f32::from_bits(peaks[2]) as f64;
+                out[peak_base + 3] = (raw[14] * inv_n).max(0.0).powf(0.125);
+                out[peak_base + 4] = (raw[15] * inv_n).max(0.0).powf(0.125);
+                out[peak_base + 5] = (raw[16] * inv_n).max(0.0).powf(0.125);
             }
         }
         Ok(out)
