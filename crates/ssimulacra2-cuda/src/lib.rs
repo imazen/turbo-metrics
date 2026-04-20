@@ -457,8 +457,11 @@ impl Ssimulacra2 {
         for scale in 0..SCALES {
             // 1. Produce ref_linear at this scale.
             if scale == 1 {
-                self.kernel
-                    .downscale_by_2(stream, &src_ref_linear, &mut self.ref_linear[scale - 1]);
+                self.kernel.downscale_by_2(
+                    stream,
+                    &src_ref_linear,
+                    &mut self.ref_linear[scale - 1],
+                );
             } else if scale > 1 {
                 let (prev, curr) = indices!(&mut self.ref_linear, scale - 2, scale - 1);
                 self.kernel.downscale_by_2(stream, prev, curr);
@@ -478,8 +481,7 @@ impl Ssimulacra2 {
 
             // 3. sigma11 = ref_xyb × ref_xyb (into img[scale][0], scratch).
             {
-                let (ref_xyb, sigma11_tmp) =
-                    (&self.ref_xyb_cache[scale], &mut self.img[scale][0]);
+                let (ref_xyb, sigma11_tmp) = (&self.ref_xyb_cache[scale], &mut self.img[scale][0]);
                 ref_xyb.mul(
                     ref_xyb,
                     sigma11_tmp,
@@ -489,8 +491,18 @@ impl Ssimulacra2 {
 
             // 4. Horizontal blur 2-wide: sigma11, ref_xyb → img[scale][3], img[scale][6].
             {
-                let [sigma11_tmp, _i1, _i2, sigma11_h, _i4, _i5, mu1_h, _i7, _i8, _i9] =
-                    self.img[scale].each_mut();
+                let [
+                    sigma11_tmp,
+                    _i1,
+                    _i2,
+                    sigma11_h,
+                    _i4,
+                    _i5,
+                    mu1_h,
+                    _i7,
+                    _i8,
+                    _i9,
+                ] = self.img[scale].each_mut();
                 self.kernel.blur_pass_fused_2(
                     stream,
                     &*sigma11_tmp,
@@ -517,8 +529,7 @@ impl Ssimulacra2 {
             // 6. Vertical blur 2-wide on transposed inputs → sigma11_t_cache,
             //    mu1_t_cache.
             {
-                let [i0, _i1, _i2, i3, _i4, _i5, _i6, _i7, _i8, _i9] =
-                    self.imgt[scale].each_mut();
+                let [i0, _i1, _i2, i3, _i4, _i5, _i6, _i7, _i8, _i9] = self.imgt[scale].each_mut();
                 self.kernel.blur_pass_fused_2(
                     stream,
                     &*i0,
@@ -549,7 +560,9 @@ impl Ssimulacra2 {
         stream: &CuStream,
     ) -> Result<f64> {
         if !self.reference_cache_valid {
-            panic!("compute_with_reference_linear requires set_reference_linear to be called first");
+            panic!(
+                "compute_with_reference_linear requires set_reference_linear to be called first"
+            );
         }
         let ref_ptr = src_ref_linear.device_ptr() as u64;
         let dis_ptr = src_dis_linear.device_ptr() as u64;
@@ -604,8 +617,11 @@ impl Ssimulacra2 {
         for scale in 0..SCALES {
             // 1. Downscale dis (scales 1..5).
             if scale == 1 {
-                self.kernel
-                    .downscale_by_2(&alt_stream, src_dis_linear, &mut self.dis_linear[scale - 1]);
+                self.kernel.downscale_by_2(
+                    &alt_stream,
+                    src_dis_linear,
+                    &mut self.dis_linear[scale - 1],
+                );
             } else if scale > 1 {
                 let (prev, curr) = indices!(&mut self.dis_linear, scale - 2, scale - 1);
                 self.kernel.downscale_by_2(&alt_stream, prev, curr);
@@ -615,8 +631,11 @@ impl Ssimulacra2 {
 
             // 2. linear_to_xyb dis → img[scale][9]
             if scale == 0 {
-                self.kernel
-                    .linear_to_xyb(&self.streams[scale][1], src_dis_linear, &mut self.img[scale][9]);
+                self.kernel.linear_to_xyb(
+                    &self.streams[scale][1],
+                    src_dis_linear,
+                    &mut self.img[scale][9],
+                );
             } else {
                 self.kernel.linear_to_xyb(
                     &self.streams[scale][1],
@@ -671,7 +690,8 @@ impl Ssimulacra2 {
         // dis_xyb (img[9]) → img[4], img[5], img[7].
         {
             let [_i0, i1, i2, _i3, i4, i5, _i6, i7, _i8, i9] = self.img[scale].each_mut();
-            self.kernel.blur_pass_fused_3(streams[0], &*i1, i4, &*i2, i5, &*i9, i7);
+            self.kernel
+                .blur_pass_fused_3(streams[0], &*i1, i4, &*i2, i5, &*i9, i7);
         }
 
         streams[1].wait_for_stream(streams[0]).unwrap();
@@ -706,7 +726,8 @@ impl Ssimulacra2 {
         // Vertical blur 3-wide on transposed: imgt[1,2,4] → imgt[6,7,9].
         {
             let [_i0, i1, i2, _i3, i4, _i5, i6, i7, _i8, i9] = self.imgt[scale].each_mut();
-            self.kernel.blur_pass_fused_3(streams[0], &*i1, i6, &*i2, i7, &*i4, i9);
+            self.kernel
+                .blur_pass_fused_3(streams[0], &*i1, i6, &*i2, i7, &*i4, i9);
         }
 
         // compute_error_maps inputs:
@@ -806,13 +827,7 @@ impl Ssimulacra2 {
     /// Generalization of `reduce()` that takes explicit (data, tmp)
     /// imgt-slot indices. `offset` matches the score-array offset used
     /// by the original `reduce` (one of 0, 2, 4).
-    fn reduce_at(
-        &mut self,
-        scale: usize,
-        data: usize,
-        tmp: usize,
-        offset: usize,
-    ) -> Result<()> {
+    fn reduce_at(&mut self, scale: usize, data: usize, tmp: usize, offset: usize) -> Result<()> {
         let [scratch0, scratch1] = &mut self.sum_scratch[scale][offset..offset + 2] else {
             unreachable!()
         };

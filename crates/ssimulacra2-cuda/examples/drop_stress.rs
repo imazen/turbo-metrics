@@ -65,10 +65,8 @@ fn main() {
         // Per-source GPU state matching ssim2_only_v3's lifecycle.
         let mut ref_dev: Image<u8, C<3>> = Image::malloc(w, h).expect("ref_dev malloc");
         let mut dis_dev: Image<u8, C<3>> = Image::malloc(w, h).expect("dis_dev malloc");
-        let mut ref_linear: Image<f32, C<3>> =
-            Image::malloc(w, h).expect("ref_linear malloc");
-        let mut dis_linear: Image<f32, C<3>> =
-            Image::malloc(w, h).expect("dis_linear malloc");
+        let mut ref_linear: Image<f32, C<3>> = Image::malloc(w, h).expect("ref_linear malloc");
+        let mut dis_linear: Image<f32, C<3>> = Image::malloc(w, h).expect("dis_linear malloc");
 
         let mut ssim = match Ssimulacra2::new(&ref_linear, &dis_linear, &stream) {
             Ok(s) => s,
@@ -107,9 +105,7 @@ fn main() {
             let score = ssim
                 .compute_with_reference_linear(&ref_linear, &dis_linear, &stream)
                 .expect("compute");
-            eprintln!(
-                "  [size {idx}] {w}x{h} ({px} px) dis[{k}] score={score:.3}"
-            );
+            eprintln!("  [size {idx}] {w}x{h} ({px} px) dis[{k}] score={score:.3}");
         }
 
         let score_dt = t0.elapsed().as_secs_f64();
