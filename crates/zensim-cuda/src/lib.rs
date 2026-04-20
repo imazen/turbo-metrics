@@ -96,7 +96,7 @@ struct ScaleBufs {
     /// 17 f64 + 3 u32 accumulators per channel × 3 channels. We pack
     /// into flat CuBox buffers — 51 f64 + 9 u32 per scale.
     accum_f64: CuBox<[f64]>, // 17 * 3
-    peak_u32: CuBox<[u32]>,  // 3 * 3
+    peak_u32: CuBox<[u32]>, // 3 * 3
     /// Working dims.
     w: u32,
     h: u32,
@@ -158,8 +158,7 @@ impl Zensim {
         let stream = {
             let range = CuStream::priority_range()
                 .map_err(|e| Error::Cuda(format!("priority_range: {:?}", e)))?;
-            CuStream::new_with_priority(range.least)
-                .map_err(|e| Error::Cuda(format!("{:?}", e)))?
+            CuStream::new_with_priority(range.least).map_err(|e| Error::Cuda(format!("{:?}", e)))?
         };
         let kernel = Kernel::load();
 
@@ -175,10 +174,10 @@ impl Zensim {
             h = (h + 1) / 2;
         }
 
-        let ref_u8 = Image::<u8, C<3>>::malloc(width, height)
-            .map_err(|e| Error::Npp(format!("{:?}", e)))?;
-        let dis_u8 = Image::<u8, C<3>>::malloc(width, height)
-            .map_err(|e| Error::Npp(format!("{:?}", e)))?;
+        let ref_u8 =
+            Image::<u8, C<3>>::malloc(width, height).map_err(|e| Error::Npp(format!("{:?}", e)))?;
+        let dis_u8 =
+            Image::<u8, C<3>>::malloc(width, height).map_err(|e| Error::Npp(format!("{:?}", e)))?;
 
         Ok(Self {
             kernel,
@@ -313,8 +312,7 @@ impl Zensim {
                 );
                 // V-blur + features: writes to accum_f64[ch*17..] and
                 // peak_u32[ch*3..].
-                let accum_ptr =
-                    unsafe { (sc.accum_f64.ptr() as *mut f64).add(ch * 17) };
+                let accum_ptr = unsafe { (sc.accum_f64.ptr() as *mut f64).add(ch * 17) };
                 let peak_ptr = unsafe { (sc.peak_u32.ptr() as *mut u32).add(ch * 3) };
                 self.kernel.fused_vblur_features_ssim(
                     &self.stream,
@@ -405,9 +403,8 @@ impl Zensim {
 
             // HF ratio clamp matches CPU (metric.rs line 85-87): both
             // `hf_energy_loss` and `hf_energy_gain` are `max(0, …)`.
-            let safe_ratio = |num: f64, den: f64| -> f64 {
-                if den.abs() > 0.0 { num / den } else { 0.0 }
-            };
+            let safe_ratio =
+                |num: f64, den: f64| -> f64 { if den.abs() > 0.0 { num / den } else { 0.0 } };
 
             for ch in 0..3 {
                 let raw = &host_f64[ch * 17..ch * 17 + 17];
@@ -417,8 +414,8 @@ impl Zensim {
                 let ratio_l1 = safe_ratio(raw[13], raw[12]);
 
                 // Basic (scored) 13-feature block, scales-major, channel-minor.
-                let basic_base = s * 3 * FEATURES_PER_CHANNEL_BASIC
-                    + ch * FEATURES_PER_CHANNEL_BASIC;
+                let basic_base =
+                    s * 3 * FEATURES_PER_CHANNEL_BASIC + ch * FEATURES_PER_CHANNEL_BASIC;
                 out[basic_base] = (raw[0] * inv_n).abs();
                 out[basic_base + 1] = (raw[1] * inv_n).max(0.0).powf(0.25);
                 out[basic_base + 2] = (raw[2] * inv_n).max(0.0).sqrt();

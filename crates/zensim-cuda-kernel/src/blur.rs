@@ -39,11 +39,9 @@ pub unsafe extern "ptx-kernel" fn fused_blur_h_ssim_kernel(
     height: usize,
     radius: usize,
 ) {
-    let x = core::arch::nvptx::_block_idx_x() as usize
-        * core::arch::nvptx::_block_dim_x() as usize
+    let x = core::arch::nvptx::_block_idx_x() as usize * core::arch::nvptx::_block_dim_x() as usize
         + core::arch::nvptx::_thread_idx_x() as usize;
-    let y = core::arch::nvptx::_block_idx_y() as usize
-        * core::arch::nvptx::_block_dim_y() as usize
+    let y = core::arch::nvptx::_block_idx_y() as usize * core::arch::nvptx::_block_dim_y() as usize
         + core::arch::nvptx::_thread_idx_y() as usize;
     if x >= width || y >= height {
         return;
@@ -63,7 +61,11 @@ pub unsafe extern "ptx-kernel" fn fused_blur_h_ssim_kernel(
         }
         let period = 2 * (w - 1);
         let m = ((i % period) + period) % period;
-        if m < w { m as usize } else { (period - m) as usize }
+        if m < w {
+            m as usize
+        } else {
+            (period - m) as usize
+        }
     };
 
     let mut sum_m1 = 0.0_f32;

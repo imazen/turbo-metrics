@@ -72,7 +72,9 @@ impl Kernel {
                 .launch(
                     &Self::cfg_2d(width as u32, height as u32),
                     stream,
-                    kernel_params!(src, src_pitch, x_out, y_out, b_out, dst_pitch, width, height,),
+                    kernel_params!(
+                        src, src_pitch, x_out, y_out, b_out, dst_pitch, width, height,
+                    ),
                 )
                 .expect("srgb_to_positive_xyb launch failed");
         }
@@ -101,8 +103,8 @@ impl Kernel {
                     &Self::cfg_2d(width as u32, height as u32),
                     stream,
                     kernel_params!(
-                        src, dst, src_pitch, h_mu1, h_mu2, h_sigma_sq, h_sigma12, dst_pitch,
-                        width, height, radius,
+                        src, dst, src_pitch, h_mu1, h_mu2, h_sigma_sq, h_sigma12, dst_pitch, width,
+                        height, radius,
                     ),
                 )
                 .expect("fused_blur_h_ssim launch failed");
@@ -168,7 +170,8 @@ impl Kernel {
                     &Self::cfg_2d(dst_width as u32, dst_height as u32),
                     stream,
                     kernel_params!(
-                        src, src_pitch, dst, dst_pitch, src_width, src_height, dst_width, dst_height,
+                        src, src_pitch, dst, dst_pitch, src_width, src_height, dst_width,
+                        dst_height,
                     ),
                 )
                 .expect("downscale_2x_plane launch failed");

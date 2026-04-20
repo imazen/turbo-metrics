@@ -13,7 +13,7 @@
 #![feature(abi_ptx)]
 #![feature(asm_experimental_arch)]
 
-mod color;
 mod blur;
-mod features;
+mod color;
 mod downscale;
+mod features;

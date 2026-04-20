@@ -40,7 +40,11 @@ unsafe fn mirror_y(i: isize, height: usize) -> usize {
     }
     let period = 2 * (h - 1);
     let m = ((i % period) + period) % period;
-    if m < h { m as usize } else { (period - m) as usize }
+    if m < h {
+        m as usize
+    } else {
+        (period - m) as usize
+    }
 }
 
 /// Fused V-blur + SSIM/edge/HF/MSE feature extraction.
@@ -65,8 +69,7 @@ pub unsafe extern "ptx-kernel" fn fused_vblur_features_ssim_kernel(
     accum_f64: *mut f64, // 17 slots, zero-initialised by caller
     peak_u32: *mut u32,  // 3 slots, zero-initialised by caller
 ) {
-    let x = core::arch::nvptx::_block_idx_x() as usize
-        * core::arch::nvptx::_block_dim_x() as usize
+    let x = core::arch::nvptx::_block_idx_x() as usize * core::arch::nvptx::_block_dim_x() as usize
         + core::arch::nvptx::_thread_idx_x() as usize;
     if x >= width {
         return;

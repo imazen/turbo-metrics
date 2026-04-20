@@ -19,11 +19,9 @@ pub unsafe extern "ptx-kernel" fn downscale_2x_plane_kernel(
     dst_width: usize,
     dst_height: usize,
 ) {
-    let x = core::arch::nvptx::_block_idx_x() as usize
-        * core::arch::nvptx::_block_dim_x() as usize
+    let x = core::arch::nvptx::_block_idx_x() as usize * core::arch::nvptx::_block_dim_x() as usize
         + core::arch::nvptx::_thread_idx_x() as usize;
-    let y = core::arch::nvptx::_block_idx_y() as usize
-        * core::arch::nvptx::_block_dim_y() as usize
+    let y = core::arch::nvptx::_block_idx_y() as usize * core::arch::nvptx::_block_dim_y() as usize
         + core::arch::nvptx::_thread_idx_y() as usize;
     if x >= dst_width || y >= dst_height {
         return;
