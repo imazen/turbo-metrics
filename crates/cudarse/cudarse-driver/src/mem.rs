@@ -165,7 +165,14 @@ impl<T: ?Sized> CuBox<T> {
 
 impl<T: ?Sized> Drop for CuBox<T> {
     fn drop(&mut self) {
-        unsafe { self.drop_inner(CuStream::DEFAULT_).unwrap() }
+        unsafe {
+            if let Err(e) = self.drop_inner(CuStream::DEFAULT_) {
+                eprintln!(
+                    "[cudarse] CuBox::drop cuMemFreeAsync failed (leaking): {:?}",
+                    e
+                );
+            }
+        }
     }
 }
 
@@ -204,7 +211,12 @@ where
     C: Deref<Target = T>,
 {
     fn drop(&mut self) {
-        self.drop_inner().unwrap()
+        if let Err(e) = self.drop_inner() {
+            eprintln!(
+                "[cudarse] CuPin::drop cuMemHostUnregister failed (leaking): {:?}",
+                e
+            );
+        }
     }
 }
 

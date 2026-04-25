@@ -181,7 +181,18 @@ impl Drop for CuStream {
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe {
-                cuStreamDestroy_v2(self.0).result().unwrap();
+                // Never panic in Drop — a panic-in-destructor after the
+                // primary panic (e.g., a CUDA OOM upstream) is aborted
+                // by the runtime with no unwind, killing the process
+                // before any in-flight work can flush. Log and leak
+                // instead; the OS reclaims everything when the process
+                // exits.
+                if let Err(e) = cuStreamDestroy_v2(self.0).result() {
+                    eprintln!(
+                        "[cudarse] CuStream::drop cuStreamDestroy_v2 failed (leaking): {:?}",
+                        e
+                    );
+                }
             }
         }
     }

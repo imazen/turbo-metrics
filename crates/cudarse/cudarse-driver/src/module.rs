@@ -60,7 +60,12 @@ impl CuModule {
 impl Drop for CuModule {
     fn drop(&mut self) {
         unsafe {
-            cuModuleUnload(self.0).result().unwrap();
+            if let Err(e) = cuModuleUnload(self.0).result() {
+                eprintln!(
+                    "[cudarse] CuModule::drop cuModuleUnload failed (leaking): {:?}",
+                    e
+                );
+            }
         }
     }
 }

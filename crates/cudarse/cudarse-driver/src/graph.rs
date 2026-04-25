@@ -38,7 +38,14 @@ impl CuGraph {
 
 impl Drop for CuGraph {
     fn drop(&mut self) {
-        unsafe { cuGraphDestroy(self.0.as_ptr()).result().unwrap() }
+        unsafe {
+            if let Err(e) = cuGraphDestroy(self.0.as_ptr()).result() {
+                eprintln!(
+                    "[cudarse] CuGraph::drop cuGraphDestroy failed (leaking): {:?}",
+                    e
+                );
+            }
+        }
     }
 }
 
@@ -52,7 +59,14 @@ impl CuGraphExec {
 
 impl Drop for CuGraphExec {
     fn drop(&mut self) {
-        unsafe { cuGraphExecDestroy(self.0.as_ptr()).result().unwrap() }
+        unsafe {
+            if let Err(e) = cuGraphExecDestroy(self.0.as_ptr()).result() {
+                eprintln!(
+                    "[cudarse] CuGraphExec::drop cuGraphExecDestroy failed (leaking): {:?}",
+                    e
+                );
+            }
+        }
     }
 }
 

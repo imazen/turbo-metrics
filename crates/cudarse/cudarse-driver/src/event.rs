@@ -46,6 +46,13 @@ impl CuEvent {
 
 impl Drop for CuEvent {
     fn drop(&mut self) {
-        unsafe { cuEventDestroy_v2(self.0).result().unwrap() }
+        unsafe {
+            if let Err(e) = cuEventDestroy_v2(self.0).result() {
+                eprintln!(
+                    "[cudarse] CuEvent::drop cuEventDestroy_v2 failed (leaking): {:?}",
+                    e
+                );
+            }
+        }
     }
 }
