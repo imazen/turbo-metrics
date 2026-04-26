@@ -4,7 +4,7 @@ use std::ptr::{NonNull, null_mut};
 
 use sys::{
     CuResult, cuDeviceGet, cuDeviceGetCount, cuDeviceGetName, cuDevicePrimaryCtxRelease_v2,
-    cuDevicePrimaryCtxRetain, cuDeviceTotalMem_v2,
+    cuDevicePrimaryCtxReset_v2, cuDevicePrimaryCtxRetain, cuDeviceTotalMem_v2,
 };
 
 use crate::{CuCtx, sys};
@@ -62,6 +62,22 @@ impl CuDevice {
     /// Release the primary context on the GPU.
     pub fn release_primary_ctx(&self) -> CuResult<()> {
         unsafe { cuDevicePrimaryCtxRelease_v2(self.0).result() }
+    }
+
+    /// Destroy the primary context's state and reset the device. After
+    /// this call all CUDA state on the device is gone — every Image,
+    /// Stream, Module, etc. that was bound to the prior context is
+    /// invalid and must NOT be Dropped (they'd try to free already-freed
+    /// memory).
+    ///
+    /// CUDA's docs warn that this is process-wide: every other thread
+    /// in the same process holding the primary context for this device
+    /// also gets reset. The intended use is recovering from a sticky
+    /// "context in error state" condition, e.g. after an OOM that
+    /// returns `CUDA_ERROR_OUT_OF_MEMORY` and then poisons every
+    /// subsequent call with `CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED`.
+    pub fn primary_ctx_reset(&self) -> CuResult<()> {
+        unsafe { cuDevicePrimaryCtxReset_v2(self.0).result() }
     }
 
     // pub fn create_ctx(&self) -> CuResult<CuCtx> {
