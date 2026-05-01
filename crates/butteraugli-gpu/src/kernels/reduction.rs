@@ -97,24 +97,21 @@ pub fn reduce<R: Runtime>(
     let cube_dim = CubeDim::new_1d(THREADS);
 
     unsafe {
-        let r = fused_max_pnorm_sums_kernel::launch_unchecked::<R>(
+        fused_max_pnorm_sums_kernel::launch_unchecked::<R>(
             client,
             cube_count,
             cube_dim,
-            ArrayArg::from_raw_parts::<f32>(&diffmap_handle, n_pixels, 1),
-            ArrayArg::from_raw_parts::<u32>(&max_bits_handle, 1, 1),
-            ArrayArg::from_raw_parts::<f32>(&sums_handle, 3, 1),
+            ArrayArg::from_raw_parts(diffmap_handle, n_pixels),
+            ArrayArg::from_raw_parts(max_bits_handle.clone(), 1),
+            ArrayArg::from_raw_parts(sums_handle.clone(), 3),
         );
-        if let Err(e) = r {
-            eprintln!("[butteraugli-gpu] kernel launch failed: {e:?}");
-        }
     }
 
-    let max_raw = client.read_one(max_bits_handle);
+    let max_raw = client.read_one(max_bits_handle).expect("read_one max");
     let max_bits = u32::from_bytes(&max_raw)[0];
     let max = f32::from_bits(max_bits);
 
-    let sums_raw = client.read_one(sums_handle);
+    let sums_raw = client.read_one(sums_handle).expect("read_one sums");
     let sums = f32::from_bytes(&sums_raw);
     let sum_p3 = sums[0] as f64;
     let sum_p6 = sums[1] as f64;

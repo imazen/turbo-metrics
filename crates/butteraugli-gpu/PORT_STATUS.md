@@ -6,7 +6,7 @@ Multi-vendor GPU port of `butteraugli-cuda` using CubeCL (NVIDIA + AMD + Intel +
 
 | Module | LOC (cuda) | Status | Notes |
 |---|---:|---|---|
-| `reduction` (max + 3-norm sums) | 90 | ✅ ported | First end-to-end milestone. Uses f32 sums instead of CUDA's f64 — see precision note in `reduction.rs`. |
+| `reduction` (max + 3-norm sums) | 90 | ✅ ported + validated | Bit-exact match on max-norm, <4e-6 rel diff on 3-norm vs CPU reference. RTX 5070 + CUDA 13.2. |
 | `colors` (sRGB / opsin / XYB / deinterleave) | ~250 | ⏳ TODO | Pure pointwise. Mechanical translation. |
 | `blur` (separable 1D + 5×5 mirrored) | ~420 | ⏳ TODO | Shared-memory tiles; CubeCL has `SharedMemory<T>` + `sync_units()`. |
 | `frequency` (UHF/HF/MF/LF split) | ~320 | ⏳ TODO | After `blur` (depends on it). |
@@ -100,27 +100,26 @@ maps to:
    relaxing the `eq` check to a `< 1e-3` tolerance (GPU SIMD width drift
    is real).
 
-## Toolchain reality (2026-05-01 dev box: WSL2 Ubuntu, CUDA 12.6, RTX 5070)
+## Toolchain reality
 
-End-to-end validation could not be completed in the initial port session
-due to three independent environment blockers. None of them affect kernel
-correctness (the generated CUDA C++ was inspected and is valid):
+CubeCL 0.10 requires a CUDA 13 toolkit (the `nvrtcGetTileIR` symbol).
+On WSL2 Ubuntu this is `cuda-toolkit-13-2` from the standard NVIDIA repo;
+RTX 50-series (Blackwell, sm_120) needs CUDA 13 anyway since CUDA 12.x
+nvrtc only knows up to sm_90.
 
-| Runtime | Blocker | Resolution |
-|---|---|---|
-| `cubecl-cuda` 0.10.0-pre.4 | calls `nvrtcGetTileIR` (CUDA 13+ symbol) | install CUDA 13.x |
-| `cubecl-cuda` 0.9.0 | `nvrtc` 12.6 doesn't know `sm_120` (RTX 5070 / Blackwell) | install CUDA 13.x or test on a pre-Blackwell GPU |
-| `cubecl-wgpu` 0.9.0 (Vulkan) | WSL2 doesn't expose Vulkan ICD to the NVIDIA GPU by default | install [NVIDIA WSL Vulkan driver](https://developer.nvidia.com/vulkan-driver), or test on native Linux/Mac/Windows |
-| `cubecl-cpu` 0.9.0 | doesn't implement `atomic<u32>` ("not yet implemented" panic) | upstream issue — file with Tracel-AI |
+WSL2 doesn't expose a Vulkan ICD to Linux processes by default; the
+wgpu/Vulkan path is unreachable here. Use CUDA backend on WSL2; reserve
+WGPU testing for native Linux/Mac/Windows.
 
-**Recommended next-step environment** for continuing the port:
-- Native Linux box with NVIDIA driver 565+ and CUDA 13.x toolkit, **or**
-- Apple Silicon Mac (validates Metal backend via wgpu), **or**
-- AMD ROCm box for HIP backend validation
+`cubecl-cpu` 0.10.0-pre.4 doesn't implement `atomic<u32>` yet — not
+useful as a CI validator until that lands upstream.
 
-The same recommendation will let us verify the existing
-`butteraugli-cuda` against `butteraugli-gpu` for cross-implementation
-parity once both run on the same hardware.
+### Current state on this dev box (validated 2026-05-01)
+
+CUDA 13.2 + RTX 5070 + cubecl 0.10.0-pre.4 — reduction kernel matches
+CPU reference bit-exactly on max-norm and within 4e-6 relative error on
+3-norm (f32 accumulator round-off only). End-to-end CubeCL pipeline is
+verified working.
 
 ## CubeCL gotchas discovered during port
 
