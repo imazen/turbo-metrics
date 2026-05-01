@@ -1,98 +1,80 @@
 # butteraugli-gpu — Handoff
 
-Status as of 2026-05-01 (afternoon update). The single-resolution
-pipeline is fully wired. Remaining: a ~2× calibration gap vs CPU
-butteraugli, plus multi-resolution and reference-cache work.
+Status as of 2026-05-01 (evening). **Single-resolution pipeline now
+matches CPU butteraugli to <1 % on synthetic and 0.0 % on real images.**
+Remaining: multi-resolution supersample-add and the reference-cache
+optimisation.
 
 ## TL;DR
 
-- **All 8 kernel modules ported, validated, and wired into a real
-  end-to-end pipeline** running on RTX 5070 + CUDA 13.2. Identical-
-  image case → score = 0; perturbed images → monotone-with-magnitude
-  score; reduction matches CPU bit-exact.
-- **One open algorithmic issue:** GPU score ≈ 2× CPU score on real
-  images and synthetic perturbations (`single_resolution=true` on the
-  CPU side). Mean diffmap ratio is 1.14×; peak ratio is 2×. Source
-  unknown — the most likely candidates are gamma function precision
-  (CPU uses `fast_log2f` polynomial; GPU uses CUDA's native `ln`)
-  and/or some quiet scaling difference inside frequency separation.
-- **Toolchain quirks documented** in `PORT_STATUS.md`.
-- **3 new diagnostic examples**: `parity_vs_cpu`, `parity_real_image`,
-  `diffmap_inspect` — last one dumps GPU intermediate buffers
-  (mask, AC/DC accumulators, LF/MF/HF/UHF planes) to localize the gap.
+- **All 8 kernel modules ported, validated, and wired end-to-end.**
+- **Score parity with CPU butteraugli** (`single_resolution=true`):
+  GPU within 0.0–0.8 % on synthetic and effectively 0 % on a real
+  1018×1014 PNG comparison. Earlier ~2× gap was caused by feeding the
+  LF blur (sigma=7.156) into opsin's sensitivity input where CPU uses a
+  separate sigma=1.2 5-tap blur. Fixed in commit `a80b6bd`.
+- **Identical-image case → exactly 0.** Reduction is bit-exact vs CPU.
+- **Toolchain quirks documented** in `PORT_STATUS.md` (8 cubecl 0.10
+  codegen issues + workarounds).
+- **2 in-tree parity examples**: `parity_vs_cpu` (synthetic perturbations
+  64×64 → 512×512) and `parity_real_image` (PNG-based).
 
 Repo: https://github.com/imazen/turbo-metrics — branch `master`.
-Latest commit at handoff time: `7250d0e`.
+Latest commit at handoff time: `a80b6bd`.
+
+## Validated parity (post-fix)
+
+`parity_vs_cpu` (synthetic gradient + diagonal stripes):
+
+| size | mag | CPU score | GPU score | Δ |
+|---|---|---|---|---|
+| 64×64   |  1 |  0.8632 |  0.8634 | +0.0 % |
+| 64×64   | 12 |  9.2891 |  9.2556 | +0.4 % |
+| 64×64   | 32 | 21.1890 | 21.1232 | +0.3 % |
+| 256×256 | 12 |  9.7129 |  9.7149 | +0.0 % |
+| 512×512 | 32 | 22.7274 | 22.5454 | +0.8 % |
+
+`parity_real_image` (1018×1014 PNG, JPEG-like 8×8 block perturbation):
+
+| mag | CPU score | GPU score | Δ |
+|---|---|---|---|
+|  1 |  1.0312 |  1.0314 | +0.0 % |
+|  4 |  3.3640 |  3.3646 | +0.0 % |
+| 12 | 10.0659 | 10.0678 | +0.0 % |
+| 32 | 25.9080 | 25.9132 | +0.0 % |
+
+`pnorm_3` deltas are similarly within 0.1 %. Sub-percent residual is
+consistent with f32 round-off across the 30+ kernel pipeline.
 
 ## What's done
 
 Kernel ports (one Rust source, dispatchable across CUDA/WGPU/Metal/HIP/CPU):
 
-| Module | LOC | Validated against | Status |
+| Module | LOC | Validation | Status |
 |---|---|---|---|
-| `kernels::reduction` | 90 | CPU butteraugli (max ≡ exact, 3-norm <4e-6 rel) | ✅ |
-| `kernels::colors` | 145 | CPU formulas (sRGB <3e-7, opsin <8e-6 abs) | ✅ |
-| `kernels::blur` | 130 | CPU separable Gaussian (5 sigmas, <5e-7 abs) | ✅ |
-| `kernels::frequency` | 270 | Pipeline run | ✅ |
-| `kernels::downscale` | 90 | Pipeline run | ✅ |
-| `kernels::masking` | 160 | Pipeline run | ✅ |
-| `kernels::diffmap` | 150 | Pipeline run | ✅ |
-| `kernels::malta` | 540 | Pipeline run | ✅ |
-| `pipeline::Butteraugli` | 750 | End-to-end real GPU butteraugli scores | ✅ wired |
+| `kernels::reduction` | 90 | bit-exact max-norm vs CPU; 3-norm <4e-6 rel | ✅ |
+| `kernels::colors` | 145 | sRGB <3e-7, opsin <8e-6 abs vs CPU | ✅ |
+| `kernels::blur` | 130 | <3e-5 abs vs CPU butteraugli's actual blur over 9 cases | ✅ |
+| `kernels::frequency` | 270 | Pipeline parity at <1 % | ✅ |
+| `kernels::downscale` | 90 | Ready for multi-res orchestration | ✅ |
+| `kernels::masking` | 160 | Pipeline parity at <1 % | ✅ |
+| `kernels::diffmap` | 150 | Pipeline parity at <1 % | ✅ |
+| `kernels::malta` | 540 | Pipeline parity at <1 % | ✅ |
+| `pipeline::Butteraugli` | 750 | <0.0–0.8 % vs CPU on every test | ✅ |
 
-Examples that exist and run on RTX 5070 + CUDA 13.2:
-- `reduction_parity` — bit-exact match w/ CPU
+In-tree examples that run on RTX 5070 + CUDA 13.2:
+- `reduction_parity` — bit-exact match w/ CPU butteraugli's reduction
 - `colors_parity` — sRGB+opsin <8e-6 abs vs CPU
 - `blur_parity` — 5 sigmas H+V <5e-7 abs vs CPU
 - `end_to_end` — produces real `(score, pnorm_3)` for any image pair
-- `parity_vs_cpu` — synthetic perturbation series, 64×64 to 512×512
+- `parity_vs_cpu` — synthetic perturbation series, all sizes
 - `parity_real_image` — real PNG vs JPEG-like perturbation
 - `diffmap_inspect` — pixel-by-pixel CPU-vs-GPU diff with intermediate
   buffer dumps (mask/AC/DC/LF/MF/HF/UHF) at probe points
 
 ## What's left
 
-### 1. Close the ~2× calibration gap (open question)
-
-GPU and CPU agree on the *zero* case but diverge by a factor of ~2 on
-non-trivial inputs. Numbers from the synthetic test on `parity_vs_cpu`:
-
-| size | mag | CPU score | GPU score | Δ |
-|---|---|---|---|---|
-| 64×64 | 1 | 0.86 | 1.08 | +25% |
-| 64×64 | 12 | 9.29 | 13.62 | +47% |
-| 64×64 | 32 | 21.19 | 32.99 | +56% |
-| 1018×1014 | 12 | 10.07 | 24.82 | +147% |
-
-Mean diffmap ratio is much closer to 1 (~1.14×) — the divergence is
-mostly in the peak. From the `diffmap_inspect` dump on a flat-128
-image with one perturbed pixel at the center:
-
-```
-At (32, 32) center:
-  GPU AC[Y] sum = 1696    (Malta UHF + HF + MF + L2asym + L2 + mask_to_error)
-  CPU AC[Y] sum ≈ 398     (same algorithm shape, single-resolution)
-```
-
-That's 4× larger in AC, 2× larger in `sqrt(mask·AC + mdc·DC)`. The
-2× factor is suspicious — possible causes worth investigating:
-
-1. **Gamma precision:** CPU uses `fast_log2f` (polynomial, ~3.9e-6
-   abs error). GPU uses CUDA `ln`. For values ~30 the absolute error
-   is similar but the CPU polynomial happens to bias *low*; we may
-   be propagating a sensitivity that's slightly different in a way
-   that amplifies through frequency separation.
-2. **Some scaling we miss in the X-channel pre-Malta path** — `WMUL[3]
-   = 2150` is the largest weight; small upstream divergences would
-   dominate.
-3. **Mask blur scratch:** I fixed one buffer-aliasing bug in image-B
-   mask blur (`diffmap_buf` is now used as the H-pass scratch).
-   Worth re-scanning the orchestration for similar issues.
-
-The score is *meaningful* — perturbation magnitude correlates
-monotonically and identical inputs give exactly 0. Just calibrated wrong.
-
-### 2. Multi-resolution supersample-add
+### 1. Multi-resolution supersample-add
 
 CPU butteraugli's default mode (without `single_resolution=true`) adds
 a half-resolution diffmap mixed in via:
@@ -104,14 +86,15 @@ dest += 0.5 * src_upsampled;
 
 We have `kernels::downscale::downsample_2x_kernel` and
 `add_upsample_2x_kernel` ready; just need orchestration. ~200 LOC.
+Adds ~5–15 % to the score on natural images.
 
-### 3. Reference cache
+### 2. Reference cache
 
 `set_reference()` / `compute_with_reference()` so a series of distorted-
 image comparisons skip re-running image-1 kernels. Mirrors butteraugli-
 cuda's reference cache shape.
 
-### 4. Production polish
+### 3. Production polish
 
 - Cross-arch parity test (port the 191-entry `cross_arch_parity.rs`
   table from CPU butteraugli).
@@ -212,8 +195,8 @@ crates/butteraugli-gpu/
 │   ├── colors_parity.rs    # ✅ runs, matches CPU
 │   ├── blur_parity.rs      # ✅ runs, matches CPU
 │   ├── end_to_end.rs       # ✅ produces (score, pnorm_3)
-│   ├── parity_vs_cpu.rs    # ✅ synthetic CPU-GPU comparison
-│   ├── parity_real_image.rs # ✅ PNG-based comparison
+│   ├── parity_vs_cpu.rs    # ✅ synthetic CPU-GPU comparison <1 %
+│   ├── parity_real_image.rs # ✅ PNG-based comparison <0.1 %
 │   └── diffmap_inspect.rs  # ✅ pixel-level diff + buffer dumps
 └── tests/
     └── reduction_parity.rs # ✅ 4 cases, all pass
@@ -221,16 +204,41 @@ crates/butteraugli-gpu/
 
 ### Suggested next-session order
 
-1. **Find the 2× source.** Run `diffmap_inspect`, write a CPU-side
-   probe via `butteraugli::psycho::separate_frequencies` (the module
-   is public), dump CPU intermediate buffers at the same probe points
-   as the GPU dump. Diff. The first plane that diverges is the bug.
-2. After parity lands, **wire multi-resolution** (~200 LOC of
-   orchestration around the existing `downsample_2x_kernel` and
-   `add_upsample_2x_kernel`).
-3. Add **reference cache** for the encoder use case.
-4. Lock parity with a 191-entry cross-arch test ported from CPU
+1. **Wire multi-resolution.** Subsample inputs to half-res, run a second
+   pipeline pass, supersample-add the result with weight=0.5. ~200 LOC
+   of orchestration around the existing `downsample_2x_kernel` and
+   `add_upsample_2x_kernel`.
+2. **Add reference cache** for the encoder use case.
+3. **Lock parity** with a 191-entry cross-arch test ported from CPU
    butteraugli's `cross_arch_parity.rs`.
+
+## Diagnostic notes (kept for future debugging)
+
+The 2× score gap that motivated the SIGMA_OPSIN fix was found by:
+1. `parity_vs_cpu` showed scores ≈ 2× CPU on every test.
+2. `diffmap_inspect` showed GPU's max-norm pixel value was 2× CPU's at
+   the perturbation centre. Wing values (far from peak) were
+   wrong-signed on GPU vs zero on CPU.
+3. A throwaway diagnostic (since deleted) used a path-dep on
+   `butteraugli` with `internals` feature, dumped XYB / LF / MF / HF /
+   UHF planes side-by-side. The first divergent stage was XYB:
+   GPU produced Y_pert ≈ 210 at the perturbed pixel, CPU produced
+   Y_pert ≈ 188.
+4. Reading CPU's `opsin_dynamics_image` revealed the internal
+   sigma=1.2 `blur_mirrored_5x5` for sensitivity — different from
+   the SIGMA_LF=7.156 LF blur that the GPU pipeline was reusing.
+
+If a future bug needs similar localisation, the path-dep diagnostic
+pattern is:
+
+```toml
+butteraugli = { version = "0.9.2", path = "/home/lilith/work/butteraugli/butteraugli", features = ["internals"] }
+```
+
+This exposes `butteraugli::opsin`, `butteraugli::psycho`,
+`butteraugli::blur`, `butteraugli::image` for direct comparison
+against the GPU's debug accessors (`debug_lf`, `debug_freq`,
+`debug_block_diff_ac/dc`, `debug_mask`).
 
 ## Related work landed earlier in the same thread
 
