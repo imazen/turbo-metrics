@@ -9,12 +9,12 @@ Multi-vendor GPU port of `butteraugli-cuda` using CubeCL (NVIDIA + AMD + Intel +
 | `reduction` (max + 3-norm sums) | 90 | ✅ ported + validated | Bit-exact match on max-norm, <4e-6 rel diff on 3-norm vs CPU reference. RTX 5070 + CUDA 13.2. |
 | `colors` (sRGB / opsin / XYB / deinterleave) | ~250 | ✅ ported + validated (sRGB+opsin) | sRGB→linear within 3e-7, opsin within 8e-6 vs CPU. `linear_to_xyb` and `deinterleave_3ch` not yet needed. |
 | `blur` (separable 1D + 5×5 mirrored) | ~420 | ✅ ported + validated (sep. 1D) | H + V Gaussian both within 5e-7 abs diff vs CPU on all 5 butteraugli sigmas (1.2, 1.56, 2.7, 3.22, 7.16). 5×5 mirrored variant not yet ported. |
-| `frequency` (UHF/HF/MF/LF split) | ~320 | ⏳ TODO | After `blur` (depends on it). |
-| `downscale` (2× subsample) | ~110 | ⏳ TODO | Pointwise on coarser grid. |
-| `malta` (perceptual contrast) | ~700 | ⏳ TODO | Largest module; many directional taps. |
-| `masking` (mask_to_error_mul, fuzzy_erosion) | ~280 | ⏳ TODO | Pointwise + 3×3 morphological. |
-| `diffmap` (combine_channels_to_diffmap_fused) | ~150 | ⏳ TODO | Pointwise channel combine. |
-| Pipeline orchestration (`Butteraugli` struct, multi-res, ref cache) | ~2400 (lib.rs) | ⏳ TODO | Last step; needs all kernels. |
+| `frequency` (UHF/HF/MF/LF split) | ~320 | ✅ ported | 8 pointwise kernels: xyb_low_freq, subtract, sub_remove/amplify_range, suppress_x_by_y, separate_hf_uhf, remove/amplify_range. |
+| `downscale` (2× subsample) | ~110 | ✅ ported | downsample_2x + add_upsample_2x with 0.3 heuristic mix. |
+| `malta` (perceptual contrast) | ~700 | ✅ ported | HF (9-tap × 16) + LF (5-tap × 16) variants, 24×24 SharedMemory tile, sync_cube(). |
+| `masking` (mask_to_error_mul, fuzzy_erosion) | ~280 | ✅ ported | combine_channels_for_masking, mask_to_error_mul, diff_precompute, fuzzy_erosion. |
+| `diffmap` (combine_channels_to_diffmap_fused) | ~150 | ✅ ported | compute_diffmap (sqrt(maskY·ΣAC + maskDcY·ΣDC)), l2_diff, l2_asym_diff. |
+| Pipeline orchestration (`Butteraugli` struct, multi-res, ref cache) | ~2400 (lib.rs) | 🟡 partial | Single-res scaffold built (sRGB→linear, opsin, blur). Frequency separation + malta + masking + compute_diffmap wiring is the remaining 30% TODO. Multi-res supersample-add and reference cache pending. |
 
 ## Translation patterns (reference for porting)
 

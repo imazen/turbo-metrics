@@ -28,6 +28,9 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod kernels;
+pub mod pipeline;
+
+pub use pipeline::Butteraugli;
 
 use cubecl::prelude::*;
 
