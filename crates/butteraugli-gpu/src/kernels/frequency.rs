@@ -158,3 +158,116 @@ pub fn amplify_range_kernel(arr: &mut Array<f32>, w: f32) {
     }
     arr[idx] = amplify_range_around_zero(arr[idx], w);
 }
+
+/// Split a band by `orig` and a precomputed Gaussian-blurred copy.
+/// Mirrors CPU `separate_mf_hf_channel` for X channel:
+///   `out_high[i] = orig[i] − blurred[i]`
+///   `orig[i]    = remove_range_around_zero(blurred[i], w)`
+#[cube(launch_unchecked)]
+pub fn split_band_remove_inplace_kernel(
+    orig: &mut Array<f32>,
+    blurred: &Array<f32>,
+    out_high: &mut Array<f32>,
+    w: f32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= orig.len() {
+        terminate!();
+    }
+    let o = orig[idx];
+    let b = blurred[idx];
+    out_high[idx] = o - b;
+    orig[idx] = remove_range_around_zero(b, w);
+}
+
+/// Same as `split_band_remove_inplace_kernel`, but uses
+/// `amplify_range_around_zero` on the blurred low-band — for Y channel.
+#[cube(launch_unchecked)]
+pub fn split_band_amplify_inplace_kernel(
+    orig: &mut Array<f32>,
+    blurred: &Array<f32>,
+    out_high: &mut Array<f32>,
+    w: f32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= orig.len() {
+        terminate!();
+    }
+    let o = orig[idx];
+    let b = blurred[idx];
+    out_high[idx] = o - b;
+    orig[idx] = amplify_range_around_zero(b, w);
+}
+
+/// HF→UHF split for the X (chroma) channel — matches CPU
+/// `process_uhf_hf_x`.
+///   `out_uhf[i] = remove_range(orig − blurred, uhf_range)`
+///   `out_hf[i]  = remove_range(blurred,        hf_range)`
+#[cube(launch_unchecked)]
+pub fn split_uhf_hf_x_kernel(
+    hf_orig: &Array<f32>,
+    blurred: &Array<f32>,
+    out_uhf: &mut Array<f32>,
+    out_hf: &mut Array<f32>,
+    uhf_range: f32,
+    hf_range: f32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= out_uhf.len() {
+        terminate!();
+    }
+    let o = hf_orig[idx];
+    let b = blurred[idx];
+    out_uhf[idx] = remove_range_around_zero(o - b, uhf_range);
+    out_hf[idx] = remove_range_around_zero(b, hf_range);
+}
+
+/// HF→UHF split for the Y (luminance) channel — matches CPU
+/// `process_uhf_hf_y`. Uses MAXCLAMP + amplify-range with the f32-baked
+/// constants from `consts.rs`.
+///   hf_clamped = maximum_clamp(blurred, MAXCLAMP_HF)
+///   uhf_val    = orig − hf_clamped
+///   out_uhf    = maximum_clamp(uhf_val, MAXCLAMP_UHF) · MUL_Y_UHF
+///   out_hf     = amplify_range(hf_clamped · MUL_Y_HF, ADD_HF_RANGE)
+#[cube(launch_unchecked)]
+pub fn split_uhf_hf_y_kernel(
+    hf_orig: &Array<f32>,
+    blurred: &Array<f32>,
+    out_uhf: &mut Array<f32>,
+    out_hf: &mut Array<f32>,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= out_uhf.len() {
+        terminate!();
+    }
+    let orig = hf_orig[idx];
+    let b = blurred[idx];
+    let hf_clamped = maximum_clamp(b, KMAXCLAMP_HF);
+    let uhf_val = orig - hf_clamped;
+    let uhf_clamped = maximum_clamp(uhf_val, KMAXCLAMP_UHF);
+    out_uhf[idx] = uhf_clamped * UHF_MUL;
+    let scaled = hf_clamped * HF_MUL;
+    out_hf[idx] = amplify_range_around_zero(scaled, HF_AMPLIFY);
+}
+
+/// `out[i] = 0.0` — used to clear AC/DC accumulators between calls
+/// since pipeline reuses pre-allocated buffers.
+#[cube(launch_unchecked)]
+pub fn zero_plane_kernel(dst: &mut Array<f32>) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    dst[idx] = f32::new(0.0);
+}
+
+/// `dst[i] = src[i]` — used to relocate intermediate results that the
+/// non-aliasing split kernels write to a scratch buffer.
+#[cube(launch_unchecked)]
+pub fn copy_plane_kernel(src: &Array<f32>, dst: &mut Array<f32>) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    dst[idx] = src[idx];
+}

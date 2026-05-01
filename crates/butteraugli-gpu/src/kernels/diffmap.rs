@@ -64,6 +64,24 @@ pub fn l2_diff_kernel(src1: &Array<f32>, src2: &Array<f32>, dst: &mut Array<f32>
     dst[idx] = dst[idx] + weight * diff * diff;
 }
 
+/// Write-only L2 diff — overwrites `dst` (no accumulation). Use for the
+/// first contribution to a per-channel accumulator so the buffer doesn't
+/// need a separate zero pass.
+#[cube(launch_unchecked)]
+pub fn l2_diff_write_kernel(
+    src1: &Array<f32>,
+    src2: &Array<f32>,
+    dst: &mut Array<f32>,
+    weight: f32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    let diff = src1[idx] - src2[idx];
+    dst[idx] = weight * diff * diff;
+}
+
 /// Asymmetric L2 — primary squared diff plus a half-open penalty for
 /// distorted values that drop too far below or rise too far above the
 /// reference's magnitude band. Matches the CPU `L2DiffAsymmetric`.
