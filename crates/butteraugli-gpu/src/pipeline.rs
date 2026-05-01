@@ -24,6 +24,14 @@ pub const DEFAULT_INTENSITY_MULTIPLIER: f32 = 80.0;
 
 // ═══ frequency separation ═══
 const SIGMA_LF: f32 = 7.155_933_4;
+/// Sigma for opsin's sensitivity-input blur. CPU butteraugli's
+/// `opsin_dynamics_image` always uses this 5-tap blur (with mirrored
+/// boundaries, kernel radius 2) — *not* SIGMA_LF. Mismatching this
+/// causes the per-pixel sensitivity to be smoothed over a 16-pixel
+/// radius instead of a 2-pixel radius, which drops the perturbed
+/// pixel's apparent contrast by ~12 % on tiny perturbations and
+/// roughly doubles the diffmap when one bright pixel is involved.
+const SIGMA_OPSIN: f32 = 1.2;
 const SIGMA_HF: f32 = 3.224_899_0;
 const SIGMA_UHF: f32 = 1.564_163_3;
 const REMOVE_MF_RANGE: f32 = 0.29;
@@ -215,10 +223,21 @@ impl<R: Runtime> Butteraugli<R> {
             self.launch_srgb_to_linear(false);
         }
 
-        // ── 2. Blur linear RGB at sigma=SIGMA_LF (LF blur for opsin adaptation) ──
+        // ── 2. Blur linear RGB at sigma=SIGMA_OPSIN (1.2) for opsin
+        //       sensitivity input. CPU's `opsin_dynamics_image` uses a
+        //       5-tap blur at sigma=1.2; mirroring this is essential to
+        //       avoid double-smoothing the sensitivity input. ──
         for ch in 0..3 {
-            self.blur_plane(&self.lin_a[ch].clone(), &self.blur_a[ch].clone(), SIGMA_LF);
-            self.blur_plane(&self.lin_b[ch].clone(), &self.blur_b[ch].clone(), SIGMA_LF);
+            self.blur_plane(
+                &self.lin_a[ch].clone(),
+                &self.blur_a[ch].clone(),
+                SIGMA_OPSIN,
+            );
+            self.blur_plane(
+                &self.lin_b[ch].clone(),
+                &self.blur_b[ch].clone(),
+                SIGMA_OPSIN,
+            );
         }
 
         // ── 3. Opsin dynamics: linear-RGB + blurred → planar XYB ──
