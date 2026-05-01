@@ -4,6 +4,7 @@ members = [
     "crates/amf-sys",
     "crates/butteraugli-cuda",
     "crates/butteraugli-cuda-kernel",
+    "crates/butteraugli-gpu",
     "crates/dssim-cuda",
     "crates/dssim-cuda-kernel",
     "crates/codec-bitstream",
