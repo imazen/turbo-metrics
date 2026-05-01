@@ -207,11 +207,10 @@ pub struct Butteraugli {
     pub(crate) half_size: usize,
     diffmap_half: CuBox<[f32]>,
 
-    // Reduction scratch buffer (kept allocated for future use)
-    #[allow(dead_code)]
-    sum_scratch: ScratchBuffer,
-    #[allow(dead_code)]
-    sum_result: CuBox<[f64]>,
+    // libjxl 3-norm sums Σd³, Σd⁶, Σd¹² (f64 device storage). Filled by
+    // the fused `max_and_pnorm_sums_reduce` kernel alongside the max-norm
+    // reduction; host then folds them into the final 3-norm in `fetch_score`.
+    sum_p3_p6_p12: CuBox<[f64]>,
 
     // GPU-side max reduction (nppiMax_32f_C1R) for the diffmap. Avoids
     // copying the entire W*H*4 byte diffmap to host just to run `max`.
@@ -219,6 +218,11 @@ pub struct Butteraugli {
     // scan.
     max_scratch: ScratchBuffer,
     max_result: CuBox<[f32]>,
+
+    // Cached libjxl 3-norm aggregation from the most recent compute call.
+    // Always populated alongside `score` — no extra D2H bandwidth beyond
+    // an additional 24 bytes (3 × f64) per call.
+    pnorm_3: f32,
 
     // ---- Reference cache (for set_reference / compute_with_reference) ----
     // When `reference_cache_valid` is true, these buffers hold the
@@ -344,12 +348,11 @@ impl Butteraugli {
         let diffmap_half = CuBox::<[f32]>::new_zeroed(half_size, &stream)
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
 
-        // Reduction buffers
-        // We need to sum the diffmap^q, so allocate scratch for NPP Sum
-        let sum_scratch = ScratchBuffer::alloc_len(size * 4 + 1024, stream.inner() as _)
-            .map_err(|e| Error::Npp(format!("{:?}", e)))?;
-        let sum_result =
-            CuBox::<[f64]>::new_zeroed(1, &stream).map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+        // libjxl 3-norm sums [Σd³, Σd⁶, Σd¹²]. Filled by the fused max +
+        // sums kernel; the prior NPP-Sum scratch path is gone — our kernel
+        // does the reduction directly.
+        let sum_p3_p6_p12 =
+            CuBox::<[f64]>::new_zeroed(3, &stream).map_err(|e| Error::Cuda(format!("{:?}", e)))?;
 
         // GPU-side max reduction scratch (for nppiMax_32f_C1R_Ctx).
         // We oversize generously (16 KB) to cover any internal NPP needs
@@ -429,10 +432,10 @@ impl Butteraugli {
             half_height,
             half_size,
             diffmap_half,
-            sum_scratch,
-            sum_result,
+            sum_p3_p6_p12,
             max_scratch,
             max_result,
+            pnorm_3: 0.0,
             reference_cache_valid: false,
             ref_freq_full,
             ref_freq_half,
@@ -2269,27 +2272,32 @@ impl Butteraugli {
             0.5,
         );
 
-        // Max-reduce kernel on the full-res diffmap. Writes one f32
-        // (as u32 bits via atomicMax) into self.max_result. The sync
-        // + host readback happens in fetch_score(), outside the graph.
-        self.kernel.max_reduce(
+        // Fused max + 3-norm sums reduction on the full-res diffmap.
+        // Writes max as u32 bits + three f64 sums. Sync + host readback +
+        // 3-norm finalization happen in fetch_score(), outside the graph.
+        self.kernel.max_and_pnorm_sums_reduce(
             &self.stream,
             Self::ptr(&self.diffmap),
-            self.max_result.ptr() as *mut f32,
-            self.max_scratch.ptr as *mut f32,
+            self.max_result.ptr() as *mut u32,
+            self.sum_p3_p6_p12.ptr() as *mut f64,
+            (self.sum_p3_p6_p12.ptr() as *mut f64).wrapping_add(1),
+            (self.sum_p3_p6_p12.ptr() as *mut f64).wrapping_add(2),
             self.size,
         );
         Ok(())
     }
 
-    /// CPU-side tail of [`compute_with_reference`]: wait for the
-    /// pipeline (graph replay or single-shot capture) to drain, then
-    /// copy the 4-byte max result back to the host.
+    /// CPU-side tail of [`compute_with_reference`]: wait for the pipeline
+    /// (graph replay or single-shot capture) to drain, then copy back the
+    /// 4-byte max result and the 24-byte (3 × f64) 3-norm sums. Folds the
+    /// sums into the final libjxl 3-norm aggregation and stores it in
+    /// `self.pnorm_3`.
     fn fetch_score(&mut self) -> Result<f32, Error> {
         self.stream
             .sync()
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
         let mut out: f32 = 0.0;
+        let mut sums: [f64; 3] = [0.0; 3];
         unsafe {
             cudarse_driver::sys::cuMemcpyDtoH_v2(
                 &mut out as *mut f32 as *mut _,
@@ -2298,8 +2306,33 @@ impl Butteraugli {
             )
             .result()
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
+            cudarse_driver::sys::cuMemcpyDtoH_v2(
+                sums.as_mut_ptr() as *mut _,
+                self.sum_p3_p6_p12.ptr(),
+                24,
+            )
+            .result()
+            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
         }
+        // libjxl 3-norm: average of three p-norms at exponents 3, 6, 12.
+        // (Σdᵏ/n)^(1/k) for k ∈ {3, 6, 12}, then averaged.
+        let n_inv = 1.0_f64 / self.size as f64;
+        let v0 = (n_inv * sums[0]).powf(1.0 / 3.0);
+        let v1 = (n_inv * sums[1]).powf(1.0 / 6.0);
+        let v2 = (n_inv * sums[2]).powf(1.0 / 12.0);
+        self.pnorm_3 = ((v0 + v1 + v2) / 3.0) as f32;
         Ok(out)
+    }
+
+    /// libjxl 3-norm aggregation from the most recent `compute*` call —
+    /// the average of three p-norms at exponents 3, 6, 12, matching
+    /// `butteraugli_main --pnorm` and the Cloudinary CID22 paper.
+    ///
+    /// More informative than the max-norm score for codec rate-distortion
+    /// sweeps. Always populated alongside the score; no extra D2H beyond
+    /// 24 bytes per call.
+    pub fn pnorm_3(&self) -> f32 {
+        self.pnorm_3
     }
 
     /// Invalidate the cached reference. Next call to `compute_with_reference`
@@ -2319,39 +2352,31 @@ impl Butteraugli {
         self.reference_cache_valid
     }
 
-    /// Reduce diffmap to a single score by finding the maximum value.
+    /// Reduce diffmap to (max-norm score, libjxl 3-norm sums) in a single
+    /// fused on-device pass. Only 4 + 24 = 28 bytes cross PCIe instead of
+    /// the full W*H*4 byte diffmap. At 5472×3648 this saves ~80 MB D2H +
+    /// a 20 Mpx CPU linear scan per call.
     ///
-    /// Uses a custom on-device max-reduction kernel (`max_reduce_kernel`)
-    /// to produce a 4-byte scalar; only those 4 bytes cross PCIe instead
-    /// of the full W*H*4 byte diffmap. At 5472x3648 this saves ~80 MB
-    /// D2H + a 20 Mpx CPU linear scan per call.
+    /// Returns the max-norm score and stores the libjxl 3-norm in
+    /// `self.pnorm_3` for retrieval via [`Self::pnorm_3`].
     ///
-    /// The Butteraugli score is the maximum value of the diffmap,
-    /// matching the C++ libjxl implementation
-    /// (butteraugli.cc compute_score_from_diffmap).
+    /// The score is `max(diffmap)`, matching libjxl's
+    /// `butteraugli.cc:compute_score_from_diffmap`. The 3-norm matches
+    /// libjxl's `lib/extras/metrics.cc:ComputeDistanceP` at p=3.
     fn reduce_to_score(&mut self) -> Result<f32, Error> {
-        // Run the two-stage max reduction on our internal stream.
-        self.kernel.max_reduce(
+        self.kernel.max_and_pnorm_sums_reduce(
             &self.stream,
             Self::ptr(&self.diffmap),
-            self.max_result.ptr() as *mut f32,
-            self.max_scratch.ptr as *mut f32,
+            self.max_result.ptr() as *mut u32,
+            self.sum_p3_p6_p12.ptr() as *mut f64,
+            (self.sum_p3_p6_p12.ptr() as *mut f64).wrapping_add(1),
+            (self.sum_p3_p6_p12.ptr() as *mut f64).wrapping_add(2),
             self.size,
         );
         self.stream
             .sync()
             .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
-        let mut out: f32 = 0.0;
-        unsafe {
-            cudarse_driver::sys::cuMemcpyDtoH_v2(
-                &mut out as *mut f32 as *mut _,
-                self.max_result.ptr(),
-                4,
-            )
-            .result()
-            .map_err(|e| Error::Cuda(format!("{:?}", e)))?;
-        }
-        Ok(out)
+        self.fetch_score()
     }
 }
 

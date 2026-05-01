@@ -312,3 +312,101 @@ pub unsafe extern "ptx-kernel" fn power_elements_kernel(
 
     *dst.add(idx) = (*src.add(idx)).powf(q);
 }
+
+/// Fused max + libjxl 3-norm sums reduction over a Butteraugli diffmap.
+///
+/// In a single grid-strided pass over `src`, accumulates:
+///   * max(src) into `result_max_u32` (via atomicMax.u32 on f32 bit pattern)
+///   * Σ src³ into `sum_p3`   (f64, via atomicAdd.f64)
+///   * Σ src⁶ into `sum_p6`   (f64, via atomicAdd.f64)
+///   * Σ src¹² into `sum_p12` (f64, via atomicAdd.f64)
+///
+/// f64 sums match the libjxl `lib/extras/metrics.cc:ComputeDistanceP`
+/// HWY_CAP_FLOAT64 path — at 8K (33 MP) with diffmap values ≤ ~10, d¹²
+/// summed in f32 loses precision; f64 has the headroom.
+///
+/// Each thread does its own atomics (one per output) per loop iteration —
+/// straightforward but contended. For 4096 threads × 4 atomics it's still
+/// ~16K atomics total, dominated by D-D bandwidth on the diffmap read,
+/// not atomic contention. If contention becomes a hotspot, switch to a
+/// per-block shared-memory reduction with one atomic per output per block.
+///
+/// **Caller must zero `result_max_u32`, `sum_p3`, `sum_p6`, `sum_p12` on
+/// the same stream before launch.**
+///
+/// Requires SM 6.0+ for `atom.global.add.f64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "ptx-kernel" fn max_and_pnorm_sums_reduce_kernel(
+    src: *const f32,
+    result_max_u32: *mut u32,
+    sum_p3: *mut f64,
+    sum_p6: *mut f64,
+    sum_p12: *mut f64,
+    size: usize,
+) {
+    let tid = core::arch::nvptx::_block_idx_x() as usize
+        * core::arch::nvptx::_block_dim_x() as usize
+        + core::arch::nvptx::_thread_idx_x() as usize;
+    let stride =
+        core::arch::nvptx::_grid_dim_x() as usize * core::arch::nvptx::_block_dim_x() as usize;
+
+    let mut local_max_bits: u32 = 0;
+    let mut local_p3: f64 = 0.0;
+    let mut local_p6: f64 = 0.0;
+    let mut local_p12: f64 = 0.0;
+
+    let mut i = tid;
+    while i < size {
+        let v = *src.add(i);
+        let bits = v.to_bits();
+        if bits > local_max_bits {
+            local_max_bits = bits;
+        }
+        let d = v as f64;
+        let d3 = d * d * d;
+        local_p3 += d3;
+        let d6 = d3 * d3;
+        local_p6 += d6;
+        local_p12 += d6 * d6;
+        i += stride;
+    }
+
+    // Max: skip atomic if local is zero (matches max_reduce_f32_to_u32_kernel).
+    if local_max_bits != 0 {
+        let mut _discard: u32;
+        core::arch::asm!(
+            "atom.global.max.u32 {d}, [{p}], {v};",
+            d = out(reg32) _discard,
+            p = in(reg64) result_max_u32,
+            v = in(reg32) local_max_bits,
+            options(nostack, preserves_flags),
+        );
+    }
+
+    // Three f64 atomic adds. Always issue (skipping for zero local sums
+    // would only matter for all-zero diffmaps, where the cost is negligible).
+    let mut _d1: f64;
+    let mut _d2: f64;
+    let mut _d3: f64;
+    core::arch::asm!(
+        "atom.global.add.f64 {d}, [{p}], {v};",
+        d = out(reg64) _d1,
+        p = in(reg64) sum_p3,
+        v = in(reg64) local_p3,
+        options(nostack, preserves_flags),
+    );
+    core::arch::asm!(
+        "atom.global.add.f64 {d}, [{p}], {v};",
+        d = out(reg64) _d2,
+        p = in(reg64) sum_p6,
+        v = in(reg64) local_p6,
+        options(nostack, preserves_flags),
+    );
+    core::arch::asm!(
+        "atom.global.add.f64 {d}, [{p}], {v};",
+        d = out(reg64) _d3,
+        p = in(reg64) sum_p12,
+        v = in(reg64) local_p12,
+        options(nostack, preserves_flags),
+    );
+}

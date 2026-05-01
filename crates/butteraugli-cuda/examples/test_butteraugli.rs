@@ -105,7 +105,8 @@ fn main() {
         .expect("Failed to compute Butteraugli score");
     let elapsed = start.elapsed();
 
-    println!("Butteraugli score: {:.6}", score);
+    println!("Butteraugli score:  {:.6}", score);
+    println!("libjxl 3-norm:      {:.6}", butteraugli.pnorm_3());
     println!(
         "Computed in {:.2} ms ({:.1} fps)",
         elapsed.as_nanos() as f64 / 1_000_000.0,

@@ -47,6 +47,7 @@ pub struct Kernel {
     l2_asym_diff: CuFunction,
     power_elements: CuFunction,
     max_reduce_f32_to_u32: CuFunction,
+    max_and_pnorm_sums_reduce: CuFunction,
     // Batched variants (tracked in coefficient#13). Kernels whose
     // single-image version is already 1D size-indexed (e.g. opsin,
     // l2_diff, subtract_arrays) don't need a batch variant — callers
@@ -174,6 +175,9 @@ impl Kernel {
             max_reduce_f32_to_u32: module
                 .function_by_name("max_reduce_f32_to_u32_kernel")
                 .expect("max_reduce_f32_to_u32_kernel not found"),
+            max_and_pnorm_sums_reduce: module
+                .function_by_name("max_and_pnorm_sums_reduce_kernel")
+                .expect("max_and_pnorm_sums_reduce_kernel not found"),
             srgb_to_linear_batch: module
                 .function_by_name("srgb_to_linear_batch_kernel")
                 .expect("srgb_to_linear_batch_kernel not found"),
@@ -1678,6 +1682,63 @@ impl Kernel {
                     kernel_params!(src, result as *mut u32, size,),
                 )
                 .expect("max_reduce launch failed");
+        }
+    }
+
+    /// Fused max-norm + libjxl 3-norm reduction over the diffmap.
+    ///
+    /// Single grid-strided pass writes:
+    ///   * `max_result_u32` ← max(src) as f32 bit pattern (read back via
+    ///     `*(f32*)max_result_u32` since u32 bits compare like the f32 value
+    ///     for non-negative inputs)
+    ///   * `sum_p3`, `sum_p6`, `sum_p12` ← Σ src^k for k ∈ {3, 6, 12}, in f64
+    ///
+    /// The host then computes the final 3-norm:
+    ///   `((Σd³/n)^(1/3) + (Σd⁶/n)^(1/6) + (Σd¹²/n)^(1/12)) / 3`
+    /// matching `lib/extras/metrics.cc:ComputeDistanceP` at p=3.
+    ///
+    /// All four output slots must be zeroed on the same stream before
+    /// launch. Same launch geometry as `max_reduce` (16 × 256 = 4096 threads).
+    pub fn max_and_pnorm_sums_reduce(
+        &self,
+        stream: &CuStream,
+        src: *const f32,
+        max_result_u32: *mut u32,
+        sum_p3: *mut f64,
+        sum_p6: *mut f64,
+        sum_p12: *mut f64,
+        size: usize,
+    ) {
+        unsafe {
+            // Zero the max u32 (1×4 bytes) + 3×f64 sums (3×8 bytes).
+            cudarse_driver::sys::cuMemsetD32Async(max_result_u32 as u64, 0, 1, stream.raw())
+                .result()
+                .expect("max_and_pnorm_sums_reduce: clear max failed");
+            cudarse_driver::sys::cuMemsetD32Async(sum_p3 as u64, 0, 2, stream.raw())
+                .result()
+                .expect("max_and_pnorm_sums_reduce: clear sum_p3 failed");
+            cudarse_driver::sys::cuMemsetD32Async(sum_p6 as u64, 0, 2, stream.raw())
+                .result()
+                .expect("max_and_pnorm_sums_reduce: clear sum_p6 failed");
+            cudarse_driver::sys::cuMemsetD32Async(sum_p12 as u64, 0, 2, stream.raw())
+                .result()
+                .expect("max_and_pnorm_sums_reduce: clear sum_p12 failed");
+        }
+        const THREADS: u32 = 256;
+        const BLOCKS: u32 = 16;
+        let config = LaunchConfig {
+            grid_dim: (BLOCKS, 1, 1),
+            block_dim: (THREADS, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        unsafe {
+            self.max_and_pnorm_sums_reduce
+                .launch(
+                    &config,
+                    stream,
+                    kernel_params!(src, max_result_u32, sum_p3, sum_p6, sum_p12, size,),
+                )
+                .expect("max_and_pnorm_sums_reduce launch failed");
         }
     }
 }
