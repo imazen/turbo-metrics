@@ -15,4 +15,9 @@
 
 pub mod blur;
 pub mod colors;
+pub mod diffmap;
+pub mod downscale;
+pub mod frequency;
+pub mod malta;
+pub mod masking;
 pub mod reduction;
