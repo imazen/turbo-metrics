@@ -7,7 +7,7 @@ Multi-vendor GPU port of `butteraugli-cuda` using CubeCL (NVIDIA + AMD + Intel +
 | Module | LOC (cuda) | Status | Notes |
 |---|---:|---|---|
 | `reduction` (max + 3-norm sums) | 90 | ✅ ported + validated | Bit-exact match on max-norm, <4e-6 rel diff on 3-norm vs CPU reference. RTX 5070 + CUDA 13.2. |
-| `colors` (sRGB / opsin / XYB / deinterleave) | ~250 | ⏳ TODO | Pure pointwise. Mechanical translation. |
+| `colors` (sRGB / opsin / XYB / deinterleave) | ~250 | ✅ ported + validated (sRGB+opsin) | sRGB→linear within 3e-7, opsin within 8e-6 vs CPU. `linear_to_xyb` and `deinterleave_3ch` not yet needed. |
 | `blur` (separable 1D + 5×5 mirrored) | ~420 | ⏳ TODO | Shared-memory tiles; CubeCL has `SharedMemory<T>` + `sync_units()`. |
 | `frequency` (UHF/HF/MF/LF split) | ~320 | ⏳ TODO | After `blur` (depends on it). |
 | `downscale` (2× subsample) | ~110 | ⏳ TODO | Pointwise on coarser grid. |

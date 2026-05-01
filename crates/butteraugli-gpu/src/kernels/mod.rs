@@ -13,4 +13,5 @@
 //!
 //! Stages other than `reduction` are stubs at this commit; see PORT_STATUS.md.
 
+pub mod colors;
 pub mod reduction;
