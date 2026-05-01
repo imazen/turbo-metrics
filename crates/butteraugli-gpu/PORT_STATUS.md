@@ -8,7 +8,7 @@ Multi-vendor GPU port of `butteraugli-cuda` using CubeCL (NVIDIA + AMD + Intel +
 |---|---:|---|---|
 | `reduction` (max + 3-norm sums) | 90 | ✅ ported + validated | Bit-exact match on max-norm, <4e-6 rel diff on 3-norm vs CPU reference. RTX 5070 + CUDA 13.2. |
 | `colors` (sRGB / opsin / XYB / deinterleave) | ~250 | ✅ ported + validated (sRGB+opsin) | sRGB→linear within 3e-7, opsin within 8e-6 vs CPU. `linear_to_xyb` and `deinterleave_3ch` not yet needed. |
-| `blur` (separable 1D + 5×5 mirrored) | ~420 | ⏳ TODO | Shared-memory tiles; CubeCL has `SharedMemory<T>` + `sync_units()`. |
+| `blur` (separable 1D + 5×5 mirrored) | ~420 | ✅ ported + validated (sep. 1D) | H + V Gaussian both within 5e-7 abs diff vs CPU on all 5 butteraugli sigmas (1.2, 1.56, 2.7, 3.22, 7.16). 5×5 mirrored variant not yet ported. |
 | `frequency` (UHF/HF/MF/LF split) | ~320 | ⏳ TODO | After `blur` (depends on it). |
 | `downscale` (2× subsample) | ~110 | ⏳ TODO | Pointwise on coarser grid. |
 | `malta` (perceptual contrast) | ~700 | ⏳ TODO | Largest module; many directional taps. |
@@ -124,6 +124,14 @@ verified working.
 ## CubeCL gotchas discovered during port
 
 Items worth knowing if you continue this work or port other kernels:
+
+0. **`f32::log` is base-2 log; natural log is `f32::ln`.** `f32::exp`
+   is *not registered* in cubecl 0.10 (only available for f16/bf16/
+   flex32/tf32/f64). Substitute `exp(x) ≡ 2^(x · log₂(e))` using
+   `f32::powf(2.0, …)` which IS registered. The CUDA codegen lowers
+   `powf` to its native `powf` intrinsic, same hardware path.
+
+
 
 1. **`Atomic<f32>::fetch_max` codegens as `atomicMax(float*, float)` on
    the CUDA backend, which is invalid C++** (CUDA only has `atomicMax`
