@@ -16,10 +16,12 @@ path drift ≤ 8e-6.
   pyramid + ref-XYB + ref blur and skip the reference side on every
   subsequent call. Bit-exact-modulo-atomic-reordering vs the direct path
   (≤ 8e-6 drift).
-- **`Ssim2Batch`** is currently a thin sequential wrapper around the
-  cached-reference path — correct, validated against the single-image
-  path, but **does not yet use kernel-level batching**. That's the
-  follow-up (see "What's left").
+- **`Ssim2Batch`** runs the full distorted-side pipeline through
+  kernel-batched broadcast variants — broadcast `error_maps`,
+  per-image-clamped batched blur (G4.8 lesson), batched transpose,
+  per-image fused (Σ, Σ⁴) reduction. Per-image throughput at 256²
+  hits 8.7× speedup vs the sequential cached path at N=4. Scores
+  agree with `Ssim2::compute_with_reference` to ≤ 1.3e-5 absolute.
 - **3 lock tests** (`tests/parity_lock.rs`) cover JPEG-corpus parity,
   cached-vs-direct equivalence, and identical-image → 100. All green.
 
@@ -70,26 +72,24 @@ In-tree tests (`tests/parity_lock.rs`): 3 cases — `parity_jpeg_corpus`,
 
 ## What's left
 
-### 1. Kernel-level `Ssim2Batch` (the optional day-4+ work)
+### 1. ~~Kernel-level `Ssim2Batch`~~ — **landed**
 
-Right now `Ssim2Batch` loops over `compute_with_reference` once per
-distorted slot, so per-image launch overhead is the same as the cached
-single-image path. The `butteraugli-gpu::ButteraugliBatch` shape —
-broadcast reference inputs + 3D launch grids with `CUBE_POS_Z` =
-batch_idx — is the next step. Estimated ~300–500 LOC mostly in
-batched variants of:
-- `error_maps_batched_kernel` (broadcast `source`/`mu1`/`sigma11`
-  vs per-slot `distorted`/`mu2`/`sigma22`/`sigma12`)
-- `transpose_batched_kernel` (per-image plane stride)
-- `blur_pass_batched_kernel` (per-image height clamp; same trap as
-  butteraugli's `vertical_blur_batched_kernel` — see G4.8 in
-  `docs/CUBECL_GOTCHAS.md`)
-- `pointwise_mul_batched_kernel`
-- `reduction::launch_sum_p4_batched`
+Implemented as a follow-up the same night. `Ssim2Batch::compute_batch`
+runs the full distorted-side pipeline through batched kernels with the
+reference cached as broadcast inputs. Scores agree with
+`Ssim2::compute_with_reference` to ≤ 1.3e-5 absolute. Per-image
+throughput on 256² (RTX 5070 + CUDA 13.2):
 
-Throughput win at small images is large (~6× at 256² per the
-butteraugli numbers); at 1 MP+ it's marginal. Defer until a consumer
-needs it.
+| batch size | speedup |
+|---|---|
+| 1 | 0.91× (slight overhead floor) |
+| 2 | 1.34× |
+| 4 | **8.69×** |
+| 8 | 8.31× |
+| 16 | 7.28× |
+
+See `bench_batch.rs` for the harness and `pipeline_batch.rs` for the
+implementation.
 
 ### 2. Multi-vendor validation
 

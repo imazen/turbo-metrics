@@ -16,8 +16,8 @@ Intel + Apple from one Rust source). Validates against the published
 | `kernels::error_maps` | `ssimulacra2-cuda-kernel/src/error_maps.rs` | 67 | ✅ ported | Pointwise SSIM + ringing + blurring error maps. |
 | `kernels::reduction` | NPP `Sum` ×2 | 80 | ✅ ported | Fused (Σ, Σ⁴) per plane via `Atomic<f32>::fetch_add`; one launch per (scale × channel × map type). |
 | Pipeline (`pipeline::Ssim2`) | `ssimulacra2-cuda/src/lib.rs` | ~600 | ✅ wired | Full 6-octave + reductions; final score uses the CPU's published WEIGHT table and sigmoid remap. |
-| `pipeline::Ssim2::set_reference` / `compute_with_reference` | same | (above) | ✅ implemented | Cached state: full ref pyramid, ref XYB, blurred mu1, blurred sigma11. Cached vs direct path drift ≤ 8e-6 in tests. |
-| `pipeline_batch::Ssim2Batch` | `butteraugli-gpu::pipeline_batch` | ~50 | 🟡 thin wrapper | Sequential-loop wrapper around `Ssim2::compute_with_reference`; correct but doesn't yet use kernel-level batching. Day-4+ work per the porting plan. |
+| `pipeline::Ssim2::set_reference` / `compute_with_reference` | same | (above) | ✅ implemented | Cached state: full ref pyramid, ref XYB (raw + transposed), blurred mu1, blurred sigma11. Cached vs direct path drift ≤ 1.4e-5 in tests. |
+| `pipeline_batch::Ssim2Batch` | `butteraugli-gpu::pipeline_batch` | ~430 | ✅ kernel-batched | Per-scale batched buffers, broadcast-batched kernels for ref-vs-batched-dis ops, per-image fused (Σ, Σ⁴) reductions. Scores match `Ssim2::compute_with_reference` to ≤ 1.3e-5 absolute across the JPEG corpus; 7-9× per-image speedup at 256² N=4..16. |
 
 ## Validated parity (RTX 5070 + CUDA 13.2)
 
@@ -42,6 +42,24 @@ remaining noise).
 
 `examples/parity_real_image.rs` (synthetic 256×256, mag = 0..32):
 all match within 0.01 absolute, including identical-image → 99.9921.
+
+## Batched throughput (RTX 5070 + CUDA 13.2, 256×256)
+
+`examples/bench_batch.rs` (median of 5 trials, post-warmup):
+
+| batch | seq total | seq /img | batch total | batch /img | speedup |
+|---|---|---|---|---|---|
+|  1 |   7.26 ms |  7.26 ms |   7.94 ms |  7.94 ms | 0.91× |
+|  2 |   6.38 ms |  3.19 ms |   4.75 ms |  2.37 ms | 1.34× |
+|  4 |  29.68 ms |  7.42 ms |   3.41 ms |  0.85 ms | **8.69×** |
+|  8 |  40.94 ms |  5.12 ms |   4.93 ms |  0.62 ms | 8.31× |
+| 16 |  59.92 ms |  3.74 ms |   8.23 ms |  0.51 ms | 7.28× |
+
+The 0.91× at N=1 is the floor: the batched path's broadcast-indexed
+kernels and 3D launch grids carry slight per-launch overhead that the
+single-image path doesn't pay. From N=2 onwards the launch-cost
+amortisation dominates. Target was 6× per the porting plan; we hit
+~8× at the sweet spot.
 
 ## Toolchain reality
 
@@ -107,7 +125,8 @@ crates/ssim2-gpu/
 │   ├── parity_real_image.rs
 │   ├── parity_jpeg_corpus.rs
 │   ├── cached_reference.rs
-│   ├── batch_smoke.rs
+│   ├── batch_smoke.rs       # Ssim2Batch ↔ Ssim2 parity (kernel-batched path)
+│   ├── bench_batch.rs       # batched-vs-sequential per-image throughput
 │   └── end_to_end.rs
 └── tests/
     └── parity_lock.rs       # 3 CI-friendly regression tests

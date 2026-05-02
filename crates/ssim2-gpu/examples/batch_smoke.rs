@@ -1,5 +1,6 @@
 //! Smoke test for `Ssim2Batch`: cache one reference, score N
-//! distorted images, verify each result matches `compute(ref, dis)`.
+//! distorted images via `compute_batch`, verify each result matches
+//! `Ssim2::compute(ref, dis)` to within 1e-4 absolute.
 
 use cubecl::Runtime;
 use cubecl::cuda::CudaRuntime;
@@ -20,13 +21,10 @@ fn main() {
 
     let (src_bytes, w, h) = load_rgb8(dir.join("source.png").to_str().unwrap());
 
-    let dis_paths = [1u32, 5, 20, 45, 70, 90]
+    let qs = [1u32, 5, 20, 45, 70, 90];
+    let dis: Vec<Vec<u8>> = qs
         .iter()
-        .map(|q| dir.join(format!("q{q}.jpg")))
-        .collect::<Vec<_>>();
-    let dis: Vec<Vec<u8>> = dis_paths
-        .iter()
-        .map(|p| load_rgb8(p.to_str().unwrap()).0)
+        .map(|q| load_rgb8(dir.join(format!("q{q}.jpg")).to_str().unwrap()).0)
         .collect();
 
     // Reference path: one Ssim2 instance, run compute() per pair.
@@ -37,21 +35,30 @@ fn main() {
         .map(|d| single.compute(&src_bytes, d).expect("compute").score)
         .collect();
 
-    // Batch path.
+    // Batch path: one Ssim2Batch handles all 6 in a single compute_batch.
     let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, w, h).expect("batch");
+    let mut batch =
+        Ssim2Batch::<CudaRuntime>::new(client, w, h, dis.len() as u32).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
-    let batch_results = batch.compute_many(&dis).expect("batch compute_many");
+    let batch_results = batch.compute_batch(&dis).expect("compute_batch");
 
     assert_eq!(single_results.len(), batch_results.len());
     let mut max_d: f64 = 0.0;
-    for (s, b) in single_results.iter().zip(batch_results.iter()) {
+    println!("{:>4}  {:>10}  {:>10}  {:>9}", "q", "single", "batch", "Δ");
+    for (i, (s, b)) in single_results.iter().zip(batch_results.iter()).enumerate() {
         let d = (*s - b.score).abs();
         if d > max_d {
             max_d = d;
         }
+        println!(
+            "{:>4}  {:>10.4}  {:>10.4}  {:>9.6}",
+            qs[i], s, b.score, d
+        );
     }
     println!("Ssim2Batch ↔ Ssim2 max drift: {max_d:.3e}");
-    assert!(max_d < 1e-4, "batch and single paths disagree by {max_d}");
+    assert!(
+        max_d < 1e-4,
+        "batch and single paths disagree by {max_d}"
+    );
     println!("Ssim2Batch smoke test passed for {} images.", dis.len());
 }

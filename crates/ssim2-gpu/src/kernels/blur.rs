@@ -173,3 +173,102 @@ pub fn blur_pass_kernel(
 pub const BLOCK_WIDTH: u32 = 96;
 const BLOCK_WIDTH_USIZE: usize = 96;
 const BLOCK_TIMES_RING_USIZE: usize = BLOCK_WIDTH_USIZE * RING_SIZE_USIZE;
+
+/// Batched recursive Gaussian column walk.
+///
+/// `src` and `dst` hold `batch_size` planes of `width × height` packed
+/// contiguously at `plane_stride` floats apart. Launch geometry:
+/// `cube_count = (ceil(width / BLOCK_WIDTH), batch_size, 1)`,
+/// `cube_dim = (BLOCK_WIDTH, 1, 1)`. `CUBE_POS_Y` selects which image
+/// in the batch this cube walks; the IIR's height clamp stays within
+/// each plane's local height — see G4.8 in CUBECL_GOTCHAS.md for why
+/// we can't just reuse the unbatched kernel on a tall stacked buffer
+/// (the column walk would bleed across image boundaries).
+#[cube(launch_unchecked)]
+pub fn blur_pass_batched_kernel(
+    src: &Array<f32>,
+    dst: &mut Array<f32>,
+    width: u32,
+    height: u32,
+    plane_stride: u32,
+) {
+    let batch_idx = CUBE_POS_Y;
+    let x = UNIT_POS_X + CUBE_POS_X * (CUBE_DIM_X as u32);
+    if x >= width {
+        terminate!();
+    }
+    let plane_off = (batch_idx * plane_stride) as usize;
+
+    let mut ring = SharedMemory::<f32>::new(BLOCK_TIMES_RING_USIZE);
+    let tx = UNIT_POS_X as usize;
+    let ring_base = tx * RING_SIZE_USIZE;
+
+    let mut k: u32 = 0;
+    while k < RING_SIZE {
+        ring[ring_base + (k as usize)] = f32::new(0.0);
+        k += 1;
+    }
+
+    let mut prev_1 = 0.0_f32;
+    let mut prev_3 = 0.0_f32;
+    let mut prev_5 = 0.0_f32;
+    let mut prev2_1 = 0.0_f32;
+    let mut prev2_3 = 0.0_f32;
+    let mut prev2_5 = 0.0_f32;
+
+    let h = height;
+    let w = width as usize;
+
+    let span = h + RADIUS_U32 - 1;
+    let mut i: u32 = 0;
+    while i < span {
+        let right = i;
+        let left_present = i >= TWO_N;
+        let y_emit = i + 1 >= RADIUS_U32;
+
+        let right_val = if right < h {
+            src[plane_off + (right as usize) * w + (x as usize)]
+        } else {
+            f32::new(0.0)
+        };
+
+        let left_val = if left_present {
+            let slot = (i - TWO_N) % RING_SIZE;
+            ring[ring_base + (slot as usize)]
+        } else {
+            f32::new(0.0)
+        };
+
+        let sum = left_val + right_val;
+
+        let mut out_1 = sum * consts::MUL_IN_1;
+        let mut out_3 = sum * consts::MUL_IN_3;
+        let mut out_5 = sum * consts::MUL_IN_5;
+
+        out_1 = consts::MUL_PREV2_1 * prev2_1 + out_1;
+        out_3 = consts::MUL_PREV2_3 * prev2_3 + out_3;
+        out_5 = consts::MUL_PREV2_5 * prev2_5 + out_5;
+        prev2_1 = prev_1;
+        prev2_3 = prev_3;
+        prev2_5 = prev_5;
+
+        out_1 = consts::MUL_PREV_1 * prev_1 + out_1;
+        out_3 = consts::MUL_PREV_3 * prev_3 + out_3;
+        out_5 = consts::MUL_PREV_5 * prev_5 + out_5;
+        prev_1 = out_1;
+        prev_3 = out_3;
+        prev_5 = out_5;
+
+        if y_emit {
+            let y = i + 1 - RADIUS_U32;
+            if y < h {
+                dst[plane_off + (y as usize) * w + (x as usize)] = out_1 + out_3 + out_5;
+            }
+        }
+
+        let slot = right % RING_SIZE;
+        ring[ring_base + (slot as usize)] = right_val;
+
+        i += 1;
+    }
+}

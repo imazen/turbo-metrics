@@ -217,6 +217,43 @@ impl<R: Runtime> Ssim2<R> {
         (self.width, self.height)
     }
 
+    /// Number of active pyramid scales (≤ NUM_SCALES; smaller for
+    /// images that shrink below 8×8 before reaching the 6th level).
+    pub fn n_scales(&self) -> usize {
+        self.scales.len()
+    }
+
+    /// `(width, height, n_pixels)` at scale `s`.
+    pub fn scale_dims(&self, s: usize) -> (u32, u32, usize) {
+        let sc = &self.scales[s];
+        (sc.width, sc.height, sc.n)
+    }
+
+    /// Cached reference handles needed by `Ssim2Batch`. After
+    /// `set_reference`, these hold:
+    /// - `ref_xyb_t[ch]`: transposed raw reference XYB (`source` input
+    ///   to `error_maps`).
+    /// - `mu1_full[ch]`: fully-blurred reference XYB (transposed
+    ///   orientation, `mu1` input to `error_maps`).
+    /// - `sigma11_full[ch]`: fully-blurred ref·ref (`sigma11` input).
+    /// - `ref_xyb[ch]`: raw reference XYB (used by `Ssim2Batch` for
+    ///   the broadcast `sigma12 = ref_xyb · dis_xyb_batched` mul).
+    pub(crate) fn cached_ref_xyb_t(&self, s: usize) -> &[cubecl::server::Handle; 3] {
+        &self.scales[s].ref_xyb_t
+    }
+    pub(crate) fn cached_mu1_full(&self, s: usize) -> &[cubecl::server::Handle; 3] {
+        &self.scales[s].mu1_full
+    }
+    pub(crate) fn cached_sigma11_full(&self, s: usize) -> &[cubecl::server::Handle; 3] {
+        &self.scales[s].sigma11_full
+    }
+    pub(crate) fn cached_ref_xyb(&self, s: usize) -> &[cubecl::server::Handle; 3] {
+        &self.scales[s].ref_xyb
+    }
+    pub(crate) fn client(&self) -> &ComputeClient<R> {
+        &self.client
+    }
+
     /// Score one image pair, both sRGB packed RGB u8 of length
     /// `width × height × 3`.
     pub fn compute(&mut self, ref_srgb: &[u8], dist_srgb: &[u8]) -> Result<GpuSsim2Result> {
@@ -252,6 +289,10 @@ impl<R: Runtime> Ssim2<R> {
             self.run_xyb(s, true);
             self.run_self_products(s, true);
             self.run_blur_pair(s, true);
+            // Pre-transpose the raw reference XYB so subsequent
+            // compute_with_reference / Ssim2Batch::compute_batch calls
+            // can read it directly without re-transposing.
+            self.run_transpose_raw_xyb_pair(s, true, false);
         }
         self.has_cached_reference = true;
         Ok(())
@@ -282,7 +323,8 @@ impl<R: Runtime> Ssim2<R> {
             self.run_self_products(s, false); // sigma22
             self.run_cross_product(s); // sigma12
             self.run_blur_dis_only(s);
-            self.run_transpose_raw_xyb_pair(s, true, true);
+            // ref_xyb_t was cached by set_reference; only transpose dis.
+            self.run_transpose_raw_xyb_pair(s, false, true);
             self.run_error_maps(s);
             self.run_reductions(s);
         }
@@ -731,9 +773,12 @@ impl<R: Runtime> Ssim2<R> {
     }
 }
 
-/// Pointwise multiply kernel `out = a · b` (single plane).
+/// Pointwise multiply kernel `out = a · b` (single plane). Exposed
+/// to the batched pipeline because the unbatched kernel works fine on
+/// flat batched arrays — `Ssim2Batch::process_scale_batched` uses it
+/// for `sigma22 = dis · dis`.
 #[cube(launch_unchecked)]
-fn pointwise_mul_kernel(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>) {
+pub fn pointwise_mul_kernel(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>) {
     let idx = ABSOLUTE_POS;
     if idx >= out.len() {
         terminate!();
@@ -746,7 +791,7 @@ fn pointwise_mul_kernel(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>) {
 /// scales, missing entries are treated as 0 (matches the CPU which
 /// `break`s the per-scale loop early but still iterates all 6 weight
 /// rows; slots beyond `n_scales` stay at their `0.0` default).
-fn score_from_stats(avg_ssim: &[[f64; 6]], avg_edgediff: &[[f64; 12]], n_scales: usize) -> f64 {
+pub(crate) fn score_from_stats(avg_ssim: &[[f64; 6]], avg_edgediff: &[[f64; 12]], n_scales: usize) -> f64 {
     const WEIGHT: [f64; 108] = [
         0.0,
         0.000_737_660_670_740_658_6,

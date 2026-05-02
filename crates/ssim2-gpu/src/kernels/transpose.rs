@@ -32,3 +32,32 @@ pub fn transpose_kernel(
     let _ = h;
     dst[idx] = src[src_idx];
 }
+
+/// Per-image transpose for batched buffers. Each plane is
+/// `width × height`, stored at `plane_stride` floats apart in `src`
+/// and `dst`.
+#[cube(launch_unchecked)]
+pub fn transpose_batched_kernel(
+    src: &Array<f32>,
+    dst: &mut Array<f32>,
+    width: u32,
+    height: u32,
+    plane_stride: u32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    let pl = plane_stride as usize;
+    let batch_idx = idx / pl;
+    let local = idx - batch_idx * pl;
+    let h = height as usize;
+    let w = width as usize;
+    if local >= w * h {
+        terminate!();
+    }
+    let yt = local / h;
+    let xt = local - yt * h;
+    let plane_off = batch_idx * pl;
+    dst[idx] = src[plane_off + xt * w + yt];
+}
