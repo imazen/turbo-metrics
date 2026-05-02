@@ -67,6 +67,15 @@ fn main() {
         .allowlist_function("^cudaFreeAsync")
         .allowlist_function("^cudaMemcpy2DAsync")
         .allowlist_function("^cudaMemcpyAsync")
+        // CUDA 13 removed NPP's old `nppGet*` global-state queries
+        // (nppGetGpuName, nppGetGpuNumSMs, nppGetMaxThreadsPerBlock,
+        // nppGetMaxThreadsPerSM, nppGetStream, nppGetStreamContext,
+        // nppSetStream). The high-level cudarse-npp wrapper now
+        // emulates them via cudart device queries — these allowlist
+        // entries are what makes the symbols visible.
+        .allowlist_function("^cudaGetDevice")
+        .allowlist_function("^cudaDeviceGetAttribute")
+        .allowlist_function("^cudaGetDeviceProperties.*")
         .allowlist_var("^CU.*")
         .allowlist_type("^Npp.*")
         .allowlist_type("^cuda.*")

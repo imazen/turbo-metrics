@@ -61,7 +61,10 @@ impl<T: Img<f32, C<1>>> Sum<f32, C<1>> for T {
 
     fn sum_scratch_size(&self) -> Result<usize> {
         let mut size = 0;
-        unsafe { nppiSumGetBufferHostSize_32f_C1R(self.size(), &mut size).result_with(size) }
+        let ctx = crate::get_stream_ctx()?;
+        unsafe {
+            nppiSumGetBufferHostSize_32f_C1R_Ctx(self.size(), &mut size, ctx).result_with(size)
+        }
     }
 }
 
@@ -96,7 +99,10 @@ impl<T: Img<f32, C<3>>> Sum<f32, C<3>> for T {
 
     fn sum_scratch_size(&self) -> Result<usize> {
         let mut size = 0;
-        unsafe { nppiSumGetBufferHostSize_32f_C3R(self.size(), &mut size).result_with(size) }
+        let ctx = crate::get_stream_ctx()?;
+        unsafe {
+            nppiSumGetBufferHostSize_32f_C3R_Ctx(self.size(), &mut size, ctx).result_with(size)
+        }
     }
 }
 
