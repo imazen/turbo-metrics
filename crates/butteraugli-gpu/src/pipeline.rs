@@ -1,9 +1,15 @@
 //! Butteraugli pipeline orchestration.
 //!
 //! The full butteraugli algorithm wired together as kernel launches over
-//! pre-allocated CubeCL buffers. Single-resolution flavor only — the
-//! multi-resolution supersample-add and the reference cache are
-//! follow-up work.
+//! pre-allocated CubeCL buffers. Three entry points:
+//!
+//! - [`Butteraugli::new`] + [`Butteraugli::compute`] — single-resolution.
+//! - [`Butteraugli::new_multires`] + [`Butteraugli::compute`] —
+//!   single-resolution + half-resolution sibling supersample-added in,
+//!   matching CPU butteraugli's default mode.
+//! - [`Butteraugli::set_reference`] + [`Butteraugli::compute_with_reference`]
+//!   — cache reference-side intermediates and reuse them across many
+//!   distorted-image comparisons (encoder rate-distortion search).
 //!
 //! Constants and orchestration follow the CPU `butteraugli` v0.9.2
 //! crate's `compute_psycho_diff_malta` and `compute_mask_from_hf_uhf`
@@ -13,7 +19,7 @@
 use cubecl::prelude::*;
 
 use crate::GpuButteraugliResult;
-use crate::kernels::{blur, colors, diffmap, frequency, malta, masking, reduction};
+use crate::kernels::{blur, colors, diffmap, downscale, frequency, malta, masking, reduction};
 
 /// Default intensity multiplier — value of one display nit relative to
 /// linear-light input scale. CPU butteraugli passes `80.0` for the
@@ -123,6 +129,11 @@ pub struct Butteraugli<R: Runtime> {
     // Mask plane + scratch for the blurred mask of image B
     mask: cubecl::server::Handle,
     mask_scratch: cubecl::server::Handle,
+    /// Cached `blur(combine+precompute(image A))` for the mask pipeline
+    /// — needed by both fuzzy-erosion (→ self.mask) and mask_to_error
+    /// (against image B's blurred). Permanent so a `set_reference` call
+    /// can keep it across many `compute_with_reference` calls.
+    cached_blurred_a: cubecl::server::Handle,
 
     // Final diffmap
     diffmap_buf: cubecl::server::Handle,
@@ -130,10 +141,51 @@ pub struct Butteraugli<R: Runtime> {
     // Generic temp planes
     temp1: cubecl::server::Handle,
     temp2: cubecl::server::Handle,
+
+    /// Half-resolution sibling for the multi-resolution pass. `None`
+    /// for half-res instances themselves and for `Butteraugli::new` (which
+    /// is single-resolution only). Populated by [`Butteraugli::new_multires`].
+    half_res: Option<Box<Butteraugli<R>>>,
+
+    /// Set by [`set_reference`]. While true, the reference-side
+    /// intermediates (lin_a XYB, freq_a[*][*], cached_blurred_a, mask)
+    /// are valid and `compute_with_reference` may skip recomputing them.
+    has_cached_reference: bool,
 }
 
 fn alloc_plane<R: Runtime>(client: &ComputeClient<R>, n: usize) -> cubecl::server::Handle {
     client.create_from_slice(f32::as_bytes(&vec![0.0_f32; n]))
+}
+
+/// Downsample 2× the linear-RGB planes from `full` into the matching
+/// `half` instance. Free-standing so callers can keep `&mut` borrows of
+/// both instances. Mirrors CPU butteraugli's `subsample_linear_rgb_2x`,
+/// but operates plane-by-plane on already-deinterleaved buffers.
+fn populate_half_res_linear<R: Runtime>(full: &Butteraugli<R>, half: &Butteraugli<R>, is_a: bool) {
+    let (full_lin, half_lin) = if is_a {
+        (&full.lin_a, &half.lin_a)
+    } else {
+        (&full.lin_b, &half.lin_b)
+    };
+    const TPB: u32 = 256;
+    let cubes = ((half.n as u32) + TPB - 1) / TPB;
+    let dim = CubeCount::Static(cubes, 1, 1);
+    let block = CubeDim::new_1d(TPB);
+    for ch in 0..3 {
+        unsafe {
+            downscale::downsample_2x_kernel::launch_unchecked::<R>(
+                &full.client,
+                dim.clone(),
+                block.clone(),
+                ArrayArg::from_raw_parts(full_lin[ch].clone(), full.n),
+                ArrayArg::from_raw_parts(half_lin[ch].clone(), half.n),
+                full.width,
+                full.height,
+                half.width,
+                half.height,
+            );
+        }
+    }
 }
 
 fn alloc_3<R: Runtime>(client: &ComputeClient<R>, n: usize) -> [cubecl::server::Handle; 3] {
@@ -175,6 +227,7 @@ impl<R: Runtime> Butteraugli<R> {
 
         let mask = alloc_plane(&client, n);
         let mask_scratch = alloc_plane(&client, n);
+        let cached_blurred_a = alloc_plane(&client, n);
         let diffmap_buf = alloc_plane(&client, n);
         let temp1 = alloc_plane(&client, n);
         let temp2 = alloc_plane(&client, n);
@@ -196,79 +249,138 @@ impl<R: Runtime> Butteraugli<R> {
             block_diff_ac,
             mask,
             mask_scratch,
+            cached_blurred_a,
             diffmap_buf,
             temp1,
             temp2,
+            half_res: None,
+            has_cached_reference: false,
         }
+    }
+
+    /// Construct a multi-resolution `Butteraugli` instance — same as
+    /// [`Butteraugli::new`] plus a `(w/2)×(h/2)` sibling whose diffmap
+    /// is supersample-added into the full-res diffmap before reduction.
+    /// Matches CPU butteraugli's default (non-`single_resolution`) mode.
+    ///
+    /// For very small images (`w < 16` or `h < 16`) the sibling is
+    /// skipped — same threshold CPU butteraugli uses.
+    pub fn new_multires(client: ComputeClient<R>, width: u32, height: u32) -> Self {
+        const MIN_SIZE_FOR_SUBSAMPLE: u32 = 16;
+        let mut full = Self::new(client.clone(), width, height);
+        if width >= MIN_SIZE_FOR_SUBSAMPLE && height >= MIN_SIZE_FOR_SUBSAMPLE {
+            let half_w = width.div_ceil(2);
+            let half_h = height.div_ceil(2);
+            full.half_res = Some(Box::new(Self::new(client, half_w, half_h)));
+        }
+        full
     }
 
     /// Compute the butteraugli `(score, pnorm_3)` for one image pair.
     /// Both images are sRGB u8 packed RGB (`width × height × 3` bytes).
     ///
-    /// Single-resolution only — the multi-resolution supersample-add is a
-    /// separate follow-up. Empirically the multi-res contribution is
-    /// 5-15 % of the score on natural images.
+    /// If this instance was created with [`Butteraugli::new_multires`],
+    /// the half-resolution sibling's diffmap is supersample-added into
+    /// the full-res diffmap before reduction (matches CPU butteraugli's
+    /// default mode). With [`Butteraugli::new`] the call is single-
+    /// resolution only.
     pub fn compute(&mut self, ref_srgb: &[u8], dist_srgb: &[u8]) -> GpuButteraugliResult {
-        let n_bytes = self.n * 3;
-        assert_eq!(ref_srgb.len(), n_bytes);
-        assert_eq!(dist_srgb.len(), n_bytes);
+        self.populate_linear_from_srgb(true, ref_srgb);
+        self.populate_linear_from_srgb(false, dist_srgb);
+        self.run_pipeline_from_linear(true, true);
+        reduction::reduce::<R>(&self.client, self.diffmap_buf.clone(), self.n)
+    }
 
-        // Re-upload pixel data (caller holds CPU-side copies).
-        self.src_u8_a = self.client.create_from_slice(ref_srgb);
-        self.src_u8_b = self.client.create_from_slice(dist_srgb);
-
-        // ── 1. sRGB u8 → planar linear RGB ──
-        unsafe {
-            self.launch_srgb_to_linear(true);
-            self.launch_srgb_to_linear(false);
+    /// Cache the reference image's intermediate state. After this call,
+    /// [`Butteraugli::compute_with_reference`] can be called any number
+    /// of times with different distorted images; each one skips the
+    /// reference-side ~half of the pipeline (sRGB→linear→opsin→
+    /// frequency separation → reference mask blur).
+    pub fn set_reference(&mut self, ref_srgb: &[u8]) {
+        self.populate_linear_from_srgb(true, ref_srgb);
+        // Downsample reference linear into the half-res sibling now,
+        // before opsin overwrites lin_a in place.
+        if let Some(half) = self.half_res.as_deref() {
+            populate_half_res_linear(self, half, true);
         }
-
-        // ── 2. Blur linear RGB at sigma=SIGMA_OPSIN (1.2) for opsin
-        //       sensitivity input. CPU's `opsin_dynamics_image` uses a
-        //       5-tap blur at sigma=1.2; mirroring this is essential to
-        //       avoid double-smoothing the sensitivity input. ──
-        for ch in 0..3 {
-            self.blur_plane(
-                &self.lin_a[ch].clone(),
-                &self.blur_a[ch].clone(),
-                SIGMA_OPSIN,
-            );
-            self.blur_plane(
-                &self.lin_b[ch].clone(),
-                &self.blur_b[ch].clone(),
-                SIGMA_OPSIN,
-            );
-        }
-
-        // ── 3. Opsin dynamics: linear-RGB + blurred → planar XYB ──
-        unsafe {
-            self.launch_opsin(true);
-            self.launch_opsin(false);
-        }
-
-        // ── 4. Frequency separation for each image ──
+        self.apply_opsin(true);
         self.separate_frequencies(true);
-        self.separate_frequencies(false);
+        self.compute_mask_pipeline_reference_only();
+        self.has_cached_reference = true;
+        if let Some(half) = self.half_res.as_mut() {
+            half.apply_opsin(true);
+            half.separate_frequencies(true);
+            half.compute_mask_pipeline_reference_only();
+            half.has_cached_reference = true;
+        }
+    }
 
-        // ── 5. Compute psycho diff (Malta + L2_asym + L2 + mask_to_error)
-        //       into block_diff_ac[0..2] ──
+    /// Compute butteraugli against the cached reference (must follow a
+    /// [`set_reference`] on this instance). Roughly halves per-call cost
+    /// compared to [`compute`] when iterating many distorted images
+    /// against a fixed reference (encoder rate-distortion search).
+    ///
+    /// # Panics
+    ///
+    /// If [`set_reference`] has not yet been called.
+    pub fn compute_with_reference(&mut self, dist_srgb: &[u8]) -> GpuButteraugliResult {
+        assert!(
+            self.has_cached_reference,
+            "compute_with_reference requires a prior set_reference"
+        );
+        self.populate_linear_from_srgb(false, dist_srgb);
+        // do_a=false: reference side is cached; do_b=true: distorted side needs computing.
+        self.run_pipeline_from_linear(false, true);
+        reduction::reduce::<R>(&self.client, self.diffmap_buf.clone(), self.n)
+    }
+
+    /// Internal: run the pipeline assuming `lin_a` and/or `lin_b` are
+    /// populated with linear RGB. `do_a` / `do_b` select which sides to
+    /// (re)compute; the other side is assumed cached.
+    fn run_pipeline_from_linear(&mut self, do_a: bool, do_b: bool) {
+        // Downsample full-res linear into the half-res sibling before
+        // opsin overwrites lin in place.
+        if let Some(half) = self.half_res.as_deref() {
+            if do_a {
+                populate_half_res_linear(self, half, true);
+            }
+            if do_b {
+                populate_half_res_linear(self, half, false);
+            }
+        }
+        if do_a {
+            self.apply_opsin(true);
+            self.separate_frequencies(true);
+        }
+        if do_b {
+            self.apply_opsin(false);
+            self.separate_frequencies(false);
+        }
         self.compute_psycho_diff();
-
-        // ── 6. DC (LF) diffs into block_diff_dc[0..2] ──
         self.compute_dc_diff();
-
-        // ── 7. Mask: combine_channels + diff_precompute + blur(σ=2.7) +
-        //       fuzzy_erosion → self.mask;
-        //       accumulate mask_to_error contribution into block_diff_ac[1] ──
-        self.compute_mask_pipeline();
-
-        // ── 8. compute_diffmap: mask + DC + AC → diffmap ──
+        if do_a && do_b {
+            self.compute_mask_pipeline_full();
+        } else if do_a {
+            self.compute_mask_pipeline_reference_only();
+            // No distorted side yet — the caller is `set_reference`,
+            // which doesn't run the diffmap.
+            return;
+        } else {
+            self.compute_mask_pipeline_distorted_only();
+        }
         unsafe {
             self.launch_compute_diffmap();
         }
-
-        // ── 9. Reduce diffmap to (score, pnorm_3) ──
-        reduction::reduce::<R>(&self.client, self.diffmap_buf.clone(), self.n)
+        // Take the half-res sibling out so we can call methods on both
+        // it and `self` (each `&mut self`) without splitting the borrow.
+        if let Some(mut half) = self.half_res.take() {
+            half.run_pipeline_from_linear(do_a, do_b);
+            // Recursion stops because `half.half_res` is None.
+            let src = half.diffmap_buf.clone();
+            let (sw, sh) = (half.width, half.height);
+            self.launch_add_supersampled_2x_from(&src, sw, sh);
+            self.half_res = Some(half);
+        }
     }
 
     // ───────────────────────────── helpers ─────────────────────────────
@@ -291,6 +403,38 @@ impl<R: Runtime> Butteraugli<R> {
 
     fn cube_dim_2d(&self) -> CubeDim {
         CubeDim::new_2d(16, 16)
+    }
+
+    /// Upload sRGB u8 input and convert to planar linear RGB into
+    /// `lin_a` / `lin_b`. Linear values stay in [0, 1] until opsin
+    /// scales by `intensity_multiplier=80`.
+    fn populate_linear_from_srgb(&mut self, is_a: bool, srgb: &[u8]) {
+        let n_bytes = self.n * 3;
+        assert_eq!(srgb.len(), n_bytes, "input length mismatch");
+        if is_a {
+            self.src_u8_a = self.client.create_from_slice(srgb);
+        } else {
+            self.src_u8_b = self.client.create_from_slice(srgb);
+        }
+        unsafe {
+            self.launch_srgb_to_linear(is_a);
+        }
+    }
+
+    /// Apply opsin: blur(σ=1.2) for sensitivity input, then opsin
+    /// dynamics → planar XYB (overwrites `lin_a` / `lin_b` in place).
+    fn apply_opsin(&self, is_a: bool) {
+        let (lin, bl) = if is_a {
+            (&self.lin_a, &self.blur_a)
+        } else {
+            (&self.lin_b, &self.blur_b)
+        };
+        for ch in 0..3 {
+            self.blur_plane(&lin[ch].clone(), &bl[ch].clone(), SIGMA_OPSIN);
+        }
+        unsafe {
+            self.launch_opsin(is_a);
+        }
     }
 
     unsafe fn launch_srgb_to_linear(&self, is_a: bool) {
@@ -721,8 +865,11 @@ impl<R: Runtime> Butteraugli<R> {
 
     /// CPU `compute_mask_from_hf_uhf`: combine UHF+HF → diff_precompute →
     /// blur σ=2.7 → fuzzy_erosion. Also accumulates mask-to-error for Y.
-    fn compute_mask_pipeline(&self) {
-        // Image A: combine(UHF_a, HF_a) → temp1, diff_precompute(temp1) → mask_scratch
+    /// Reference-side mask pipeline: combine(HF_a, UHF_a) →
+    /// diff_precompute → blur(σ=2.7) → `cached_blurred_a`, then
+    /// fuzzy_erosion(cached_blurred_a) → `self.mask`. Both buffers are
+    /// reusable across many `compute_with_reference` calls.
+    fn compute_mask_pipeline_reference_only(&self) {
         unsafe {
             masking::combine_channels_for_masking_kernel::launch_unchecked::<R>(
                 &self.client,
@@ -742,28 +889,34 @@ impl<R: Runtime> Butteraugli<R> {
                 ArrayArg::from_raw_parts(self.mask_scratch.clone(), self.n),
             );
         }
-        // Blur mask_scratch (image A combined+precompute) at σ=2.7, write into temp1.
-        // (Use temp2 as the H→V scratch so temp1 stays clear for use afterwards.)
+        // Blur mask_scratch (image-A combined+precompute) → cached_blurred_a;
+        // use temp1 as H-pass scratch (the diff_precompute output above no
+        // longer needs it).
         self.blur_plane_via(
             &self.mask_scratch.clone(),
+            &self.cached_blurred_a.clone(),
             &self.temp1.clone(),
-            &self.temp2.clone(),
             MASK_RADIUS,
         );
-        // temp1 now holds blurred_a. Run fuzzy_erosion(blurred_a) → mask.
         unsafe {
             masking::fuzzy_erosion_kernel::launch_unchecked::<R>(
                 &self.client,
                 self.cube_count_1d(),
                 self.cube_dim_1d(),
-                ArrayArg::from_raw_parts(self.temp1.clone(), self.n),
+                ArrayArg::from_raw_parts(self.cached_blurred_a.clone(), self.n),
                 ArrayArg::from_raw_parts(self.mask.clone(), self.n),
                 self.width,
                 self.height,
             );
         }
+    }
 
-        // Image B: combine + diff_precompute + blur into mask_scratch.
+    /// Distorted-side mask pipeline: combine(HF_b, UHF_b) →
+    /// diff_precompute → blur(σ=2.7) → `mask_scratch`, then
+    /// `mask_to_error_mul(cached_blurred_a, mask_scratch, block_diff_ac[1])`.
+    /// Assumes `cached_blurred_a` is populated by an earlier
+    /// [`compute_mask_pipeline_reference_only`].
+    fn compute_mask_pipeline_distorted_only(&self) {
         unsafe {
             masking::combine_channels_for_masking_kernel::launch_unchecked::<R>(
                 &self.client,
@@ -783,28 +936,30 @@ impl<R: Runtime> Butteraugli<R> {
                 ArrayArg::from_raw_parts(self.temp2.clone(), self.n),
             );
         }
-        // Blur image B's combined+precompute (temp2) into mask_scratch.
-        // Use diffmap_buf as the H-pass scratch — it isn't written until
-        // `launch_compute_diffmap` later in `compute()`.
+        // Blur temp2 → mask_scratch (using diffmap_buf as H-pass scratch
+        // — not written until `launch_compute_diffmap` runs later).
         self.blur_plane_via(
             &self.temp2.clone(),
             &self.mask_scratch.clone(),
             &self.diffmap_buf.clone(),
             MASK_RADIUS,
         );
-
-        // Mask-to-error contribution into block_diff_ac[1] (Y only):
-        //   block_diff_ac[1] += MASK_TO_ERROR_MUL · (blurred_a − blurred_b)²
+        // block_diff_ac[1] += MASK_TO_ERROR_MUL · (cached_blurred_a − mask_scratch)²
         unsafe {
             masking::mask_to_error_mul_kernel::launch_unchecked::<R>(
                 &self.client,
                 self.cube_count_1d(),
                 self.cube_dim_1d(),
-                ArrayArg::from_raw_parts(self.temp1.clone(), self.n),
+                ArrayArg::from_raw_parts(self.cached_blurred_a.clone(), self.n),
                 ArrayArg::from_raw_parts(self.mask_scratch.clone(), self.n),
                 ArrayArg::from_raw_parts(self.block_diff_ac[1].clone(), self.n),
             );
         }
+    }
+
+    fn compute_mask_pipeline_full(&self) {
+        self.compute_mask_pipeline_reference_only();
+        self.compute_mask_pipeline_distorted_only();
     }
 
     unsafe fn launch_compute_diffmap(&self) {
@@ -935,6 +1090,32 @@ impl<R: Runtime> Butteraugli<R> {
                 ArrayArg::from_raw_parts(acc.clone(), self.n),
                 w_gt,
                 w_lt,
+            );
+        }
+    }
+
+    /// Multi-res supersample-add: add `src` (a half-resolution diffmap of
+    /// dims `src_w × src_h`) into `self.diffmap_buf` with weight=0.5 and
+    /// the libjxl K_HEURISTIC_MIXING_VALUE=0.3 attenuation:
+    ///   `dst[i] = dst[i] · (1 − 0.3·0.5) + 0.5 · src[upsampled_i]`
+    fn launch_add_supersampled_2x_from(
+        &self,
+        src: &cubecl::server::Handle,
+        src_w: u32,
+        src_h: u32,
+    ) {
+        let src_n = (src_w as usize) * (src_h as usize);
+        unsafe {
+            downscale::add_upsample_2x_kernel::launch_unchecked::<R>(
+                &self.client,
+                self.cube_count_1d(),
+                self.cube_dim_1d(),
+                ArrayArg::from_raw_parts(self.diffmap_buf.clone(), self.n),
+                ArrayArg::from_raw_parts(src.clone(), src_n),
+                self.width,
+                self.height,
+                src_w,
+                0.5_f32,
             );
         }
     }

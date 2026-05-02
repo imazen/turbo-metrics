@@ -67,34 +67,43 @@ fn main() {
     let device = <Backend as cubecl::Runtime>::Device::default();
     let client = <Backend as cubecl::Runtime>::client(&device);
 
-    let mut gpu = Butteraugli::<Backend>::new(client, width, height);
+    let mut gpu_single = Butteraugli::<Backend>::new(client.clone(), width, height);
+    let mut gpu_multi = Butteraugli::<Backend>::new_multires(client.clone(), width, height);
+    let mut gpu_ref = Butteraugli::<Backend>::new_multires(client, width, height);
+    gpu_ref.set_reference(&ref_rgb);
 
+    println!("\n--- single-resolution mode (CPU.with_single_resolution(true)) ---");
     for &mag in &[1_i32, 4, 12, 32] {
         let dist_rgb = perturb_jpeg_like(&ref_rgb, width, height, mag);
         let ref_img = rgb_buf_to_imgvec(&ref_rgb, width, height);
         let dist_img = rgb_buf_to_imgvec(&dist_rgb, width, height);
-
         let params = ButteraugliParams::default().with_single_resolution(true);
-        let cpu =
-            butteraugli(ref_img.as_ref(), dist_img.as_ref(), &params).expect("cpu butteraugli");
-
-        let g = gpu.compute(&ref_rgb, &dist_rgb);
-
-        let cpu_score = cpu.score;
-        let cpu_pnorm = cpu.pnorm_3;
-        let rel_score = (g.score as f64 - cpu_score) / cpu_score * 100.0;
-        let rel_pnorm = (g.pnorm_3 as f64 - cpu_pnorm) / cpu_pnorm * 100.0;
+        let cpu = butteraugli(ref_img.as_ref(), dist_img.as_ref(), &params).unwrap();
+        let g = gpu_single.compute(&ref_rgb, &dist_rgb);
+        let rel = (g.score as f64 - cpu.score) / cpu.score * 100.0;
+        let rel_p = (g.pnorm_3 as f64 - cpu.pnorm_3) / cpu.pnorm_3 * 100.0;
         println!(
-            "{w}×{h} mag={:>2} | CPU score={:.4} pnorm3={:.4} | GPU score={:.4} pnorm3={:.4} | Δ score={:>+5.1}% Δ pnorm3={:>+5.1}%",
-            mag,
-            cpu_score,
-            cpu_pnorm,
-            g.score,
-            g.pnorm_3,
-            rel_score,
-            rel_pnorm,
-            w = width,
-            h = height,
+            " mag={:>2} | CPU score={:.4} pnorm3={:.4} | GPU score={:.4} pnorm3={:.4} | Δ score={:>+5.2}% Δ pnorm3={:>+5.2}%",
+            mag, cpu.score, cpu.pnorm_3, g.score, g.pnorm_3, rel, rel_p,
+        );
+    }
+
+    println!("\n--- multi-resolution mode (CPU default) ---");
+    for &mag in &[1_i32, 4, 12, 32] {
+        let dist_rgb = perturb_jpeg_like(&ref_rgb, width, height, mag);
+        let ref_img = rgb_buf_to_imgvec(&ref_rgb, width, height);
+        let dist_img = rgb_buf_to_imgvec(&dist_rgb, width, height);
+        let params = ButteraugliParams::default();
+        let cpu = butteraugli(ref_img.as_ref(), dist_img.as_ref(), &params).unwrap();
+        let g_full = gpu_multi.compute(&ref_rgb, &dist_rgb);
+        let g_cached = gpu_ref.compute_with_reference(&dist_rgb);
+        let rel = (g_full.score as f64 - cpu.score) / cpu.score * 100.0;
+        let rel_p = (g_full.pnorm_3 as f64 - cpu.pnorm_3) / cpu.pnorm_3 * 100.0;
+        let cache_drift =
+            (g_full.score as f64 - g_cached.score as f64).abs() / (g_full.score as f64).max(1e-9);
+        println!(
+            " mag={:>2} | CPU score={:.4} | GPU full={:.4} cached_ref={:.4} | Δ score={:>+5.2}% Δ pnorm3={:>+5.2}% | cache drift={:.1e}",
+            mag, cpu.score, g_full.score, g_cached.score, rel, rel_p, cache_drift,
         );
     }
 }

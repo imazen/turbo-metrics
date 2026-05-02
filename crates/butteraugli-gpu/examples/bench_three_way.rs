@@ -116,12 +116,19 @@ fn run_size(label: &str, w: u32, h: u32, ref_rgb: &[u8], dist_rgb: &[u8]) {
             .score
     });
 
-    // ── butteraugli-gpu (CubeCL, single-resolution) ──
+    // ── butteraugli-gpu (CubeCL) ──
     let device = <Backend as cubecl::Runtime>::Device::default();
     let client = <Backend as cubecl::Runtime>::client(&device);
-    let mut gpu_cubecl = GpuButteraugli::<Backend>::new(client, w, h);
+    let mut gpu_single = GpuButteraugli::<Backend>::new(client.clone(), w, h);
+    let mut gpu_multi = GpuButteraugli::<Backend>::new_multires(client.clone(), w, h);
+    let mut gpu_cached = GpuButteraugli::<Backend>::new_multires(client, w, h);
+    gpu_cached.set_reference(ref_rgb);
     let (cubecl_min, cubecl_med, cubecl_score) =
-        bench(|| gpu_cubecl.compute(ref_rgb, dist_rgb).score as f64);
+        bench(|| gpu_single.compute(ref_rgb, dist_rgb).score as f64);
+    let (cubecl_multi_min, cubecl_multi_med, cubecl_multi_score) =
+        bench(|| gpu_multi.compute(ref_rgb, dist_rgb).score as f64);
+    let (cubecl_cached_min, cubecl_cached_med, cubecl_cached_score) =
+        bench(|| gpu_cached.compute_with_reference(dist_rgb).score as f64);
 
     // ── butteraugli-cuda (PTX, multi-resolution) ──
     let stream = CuStream::new().unwrap();
@@ -166,20 +173,35 @@ fn run_size(label: &str, w: u32, h: u32, ref_rgb: &[u8], dist_rgb: &[u8]) {
         cuda_score
     );
     println!(
-        " butteraugli-gpu (CubeCL)    {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
+        " CubeCL single-res           {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
         cubecl_med,
         cubecl_min,
         mp / (cubecl_min / 1000.0),
         cubecl_score
     );
     println!(
-        " speedup vs CPU multi-res:   PTX={:.1}× | CubeCL={:.1}×",
-        cpu_full_min / cuda_min,
-        cpu_full_min / cubecl_min
+        " CubeCL multi-res            {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
+        cubecl_multi_med,
+        cubecl_multi_min,
+        mp / (cubecl_multi_min / 1000.0),
+        cubecl_multi_score
     );
     println!(
-        " PTX vs CubeCL ratio:        {:.2}×  (PTX/CubeCL)",
-        cuda_min / cubecl_min
+        " CubeCL cached-ref multi-res {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
+        cubecl_cached_med,
+        cubecl_cached_med, // print median twice — cached path is more variance-prone
+        mp / (cubecl_cached_min / 1000.0),
+        cubecl_cached_score,
+    );
+    println!(
+        " speedup vs CPU multi-res:   PTX={:.1}× | CubeCL multi-res={:.1}× | cached-ref={:.1}×",
+        cpu_full_min / cuda_min,
+        cpu_full_min / cubecl_multi_min,
+        cpu_full_min / cubecl_cached_min,
+    );
+    println!(
+        " cache speedup vs full multi-res: {:.2}×",
+        cubecl_multi_min / cubecl_cached_min,
     );
 }
 
