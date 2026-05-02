@@ -7,13 +7,30 @@
 //! - **Dimensions**: pyramid behaviour at odd / small / non-256 sizes.
 //! - **Lifecycle**: clear_reference round-trips, repeated batch calls.
 //!
-//! Runs on the CUDA backend (RTX 5070 + CUDA 13.2 in our reference
-//! environment). The cubecl JIT cache is per-process so all tests in
-//! this single file share kernel compile cost.
+//! Backend is selected at compile time:
+//! - `cuda` feature → cubecl-cuda (RTX 5070 + CUDA 13.2 reference setup).
+//! - `wgpu` feature (no `cuda`) → cubecl-wgpu (Metal on macOS, DX12 on
+//!   Windows, Vulkan on Linux when an ICD is available).
+//!
+//! The cubecl JIT cache is per-process, so all tests in this file share
+//! kernel compile cost.
 
 use cubecl::Runtime;
-use cubecl::cuda::CudaRuntime;
 use ssim2_gpu::{Error, Ssim2, Ssim2Batch};
+
+// Backend selection — picks the first available cubecl runtime in
+// order of preference. CUDA preferred locally; macOS / Windows / WSL2
+// CI fall back to wgpu (Metal / DX12 / Vulkan respectively).
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
+
+#[cfg(not(any(feature = "cuda", feature = "wgpu")))]
+compile_error!(
+    "ssim2-gpu integration tests require either the `cuda` or `wgpu` feature to select a runtime"
+);
 use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic, Xyb};
 
 const CORPUS_DIR: &str = "../dssim-cuda/test_data";
@@ -81,8 +98,8 @@ fn parity_jpeg_corpus() {
     let dir = corpus_dir();
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
 
     for q in [5u32, 20, 45, 70, 90] {
         let path = dir.join(format!("q{q}.jpg"));
@@ -112,8 +129,8 @@ fn identical_image_scores_100() {
     let dir = corpus_dir();
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     let result = s.compute(&src_bytes, &src_bytes).expect("identical");
     assert!(
         (result.score - 100.0).abs() < 0.05,
@@ -127,10 +144,10 @@ fn cached_reference_matches_direct() {
     let dir = corpus_dir();
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
 
-    let client_a = CudaRuntime::client(&Default::default());
-    let client_b = CudaRuntime::client(&Default::default());
-    let mut s_direct = Ssim2::<CudaRuntime>::new(client_a, w, h).expect("direct");
-    let mut s_cached = Ssim2::<CudaRuntime>::new(client_b, w, h).expect("cached");
+    let client_a = Backend::client(&Default::default());
+    let client_b = Backend::client(&Default::default());
+    let mut s_direct = Ssim2::<Backend>::new(client_a, w, h).expect("direct");
+    let mut s_cached = Ssim2::<Backend>::new(client_b, w, h).expect("cached");
     s_cached.set_reference(&src_bytes).expect("set_reference");
 
     for q in [5u32, 45, 90] {
@@ -160,17 +177,17 @@ fn batch_matches_single_image() {
         .collect();
 
     // Single-image path.
-    let client = CudaRuntime::client(&Default::default());
-    let mut single = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut single = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     let single_results: Vec<f64> = dis
         .iter()
         .map(|d| single.compute(&src_bytes, d).expect("compute").score)
         .collect();
 
     // Batched path.
-    let client = CudaRuntime::client(&Default::default());
+    let client = Backend::client(&Default::default());
     let mut batch =
-        Ssim2Batch::<CudaRuntime>::new(client, w, h, dis.len() as u32).expect("Ssim2Batch::new");
+        Ssim2Batch::<Backend>::new(client, w, h, dis.len() as u32).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
     let batch_results = batch.compute_batch(&dis).expect("compute_batch");
 
@@ -186,8 +203,8 @@ fn batch_partial_fill() {
     let dir = corpus_dir();
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, w, h, 8).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, w, h, 8).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
 
     // Pass 3 images even though batch_size = 8.
@@ -209,8 +226,8 @@ fn batch_repeated_calls_reset_sums() {
     let dir = corpus_dir();
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, w, h, 4).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, w, h, 4).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
 
     let dis = vec![load_rgb8(&dir.join("q45.jpg")).0; 4];
@@ -239,8 +256,8 @@ fn batch_empty_input_returns_empty() {
     let dir = corpus_dir();
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, w, h, 4).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, w, h, 4).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
     let r = batch.compute_batch(&[]).expect("empty input ok");
     assert_eq!(r.len(), 0);
@@ -250,26 +267,26 @@ fn batch_empty_input_returns_empty() {
 
 #[test]
 fn err_invalid_image_size() {
-    let client = CudaRuntime::client(&Default::default());
-    let r = Ssim2::<CudaRuntime>::new(client, 7, 7);
+    let client = Backend::client(&Default::default());
+    let r = Ssim2::<Backend>::new(client, 7, 7);
     assert!(matches!(r, Err(Error::InvalidImageSize)));
 
-    let client = CudaRuntime::client(&Default::default());
-    let r = Ssim2Batch::<CudaRuntime>::new(client, 7, 7, 4);
+    let client = Backend::client(&Default::default());
+    let r = Ssim2Batch::<Backend>::new(client, 7, 7, 4);
     assert!(matches!(r, Err(Error::InvalidImageSize)));
 }
 
 #[test]
 fn err_invalid_batch_size_zero() {
-    let client = CudaRuntime::client(&Default::default());
-    let r = Ssim2Batch::<CudaRuntime>::new(client, 16, 16, 0);
+    let client = Backend::client(&Default::default());
+    let r = Ssim2Batch::<Backend>::new(client, 16, 16, 0);
     assert!(matches!(r, Err(Error::InvalidBatchSize { .. })));
 }
 
 #[test]
 fn err_dim_mismatch_compute() {
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, 16, 16).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, 16, 16).expect("Ssim2::new");
     let too_small = vec![0_u8; 16 * 16 * 3 - 1];
     let ok_size = vec![0_u8; 16 * 16 * 3];
     let r = s.compute(&too_small, &ok_size);
@@ -280,8 +297,8 @@ fn err_dim_mismatch_compute() {
 
 #[test]
 fn err_dim_mismatch_set_reference() {
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, 16, 16).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, 16, 16).expect("Ssim2::new");
     let too_small = vec![0_u8; 16 * 16 * 3 - 1];
     let r = s.set_reference(&too_small);
     assert!(matches!(r, Err(Error::DimensionMismatch { .. })));
@@ -290,22 +307,22 @@ fn err_dim_mismatch_set_reference() {
 
 #[test]
 fn err_no_cached_reference() {
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, 16, 16).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, 16, 16).expect("Ssim2::new");
     let dis = vec![0_u8; 16 * 16 * 3];
     let r = s.compute_with_reference(&dis);
     assert!(matches!(r, Err(Error::NoCachedReference)));
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, 16, 16, 4).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, 16, 16, 4).expect("Ssim2Batch::new");
     let r = batch.compute_batch(&[dis]);
     assert!(matches!(r, Err(Error::NoCachedReference)));
 }
 
 #[test]
 fn err_dim_mismatch_compute_with_reference() {
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, 16, 16).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, 16, 16).expect("Ssim2::new");
     let ref_ok = vec![0_u8; 16 * 16 * 3];
     s.set_reference(&ref_ok).expect("set_reference");
     let too_small = vec![0_u8; 16 * 16 * 3 - 1];
@@ -315,8 +332,8 @@ fn err_dim_mismatch_compute_with_reference() {
 
 #[test]
 fn err_dim_mismatch_compute_batch() {
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, 16, 16, 4).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, 16, 16, 4).expect("Ssim2Batch::new");
     let ref_ok = vec![0_u8; 16 * 16 * 3];
     batch.set_reference(&ref_ok).expect("set_reference");
     let too_small = vec![0_u8; 16 * 16 * 3 - 1];
@@ -326,8 +343,8 @@ fn err_dim_mismatch_compute_batch() {
 
 #[test]
 fn err_invalid_batch_size_too_many() {
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, 16, 16, 2).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, 16, 16, 2).expect("Ssim2Batch::new");
     let ref_ok = vec![0_u8; 16 * 16 * 3];
     batch.set_reference(&ref_ok).expect("set_reference");
     let dis = vec![ref_ok.clone(); 5]; // 5 > batch_size = 2
@@ -342,8 +359,8 @@ fn clear_reference_then_set_again() {
     let dir = corpus_dir();
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     s.set_reference(&src_bytes).expect("first set");
     assert!(s.has_cached_reference());
 
@@ -368,8 +385,8 @@ fn batch_clear_reference_round_trip() {
     let (src_bytes, w, h) = load_rgb8(&dir.join("source.png"));
     let dis = load_rgb8(&dir.join("q45.jpg")).0;
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, w, h, 2).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, w, h, 2).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("first");
     let r0 = batch.compute_batch(&[dis.clone()]).expect("first call");
 
@@ -401,8 +418,8 @@ fn dim_odd_non_square() {
     )
     .expect("cpu");
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     let gpu = s.compute(&a, &b).expect("compute").score;
     let d = (gpu - cpu).abs();
     let rel = if cpu.abs() > 1e-3 {
@@ -429,8 +446,8 @@ fn dim_minimum_supported() {
     )
     .expect("cpu");
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     let gpu = s.compute(&a, &b).expect("compute").score;
     let d = (gpu - cpu).abs();
     let rel = if cpu.abs() > 1e-3 {
@@ -457,8 +474,8 @@ fn dim_larger_512x384() {
     )
     .expect("cpu");
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     let gpu = s.compute(&a, &b).expect("compute").score;
     let d = (gpu - cpu).abs();
     let rel = if cpu.abs() > 1e-3 {
@@ -480,12 +497,12 @@ fn dim_odd_with_batch() {
     let (w, h): (u32, u32) = (123, 45); // intentionally weird
     let (a, b) = synthetic_pair(w as usize, h as usize, 4);
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut single = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut single = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     let single_score = single.compute(&a, &b).expect("single").score;
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, w, h, 3).expect("Ssim2Batch::new");
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, w, h, 3).expect("Ssim2Batch::new");
     batch.set_reference(&a).expect("set_reference");
     let dis = vec![b.clone(); 3];
     let results = batch.compute_batch(&dis).expect("compute_batch");

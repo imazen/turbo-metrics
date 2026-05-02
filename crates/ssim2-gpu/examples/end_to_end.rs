@@ -6,7 +6,10 @@
 //! "did the pipeline run end-to-end without panicking" gate.
 
 use cubecl::Runtime;
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use ssim2_gpu::Ssim2;
 
 fn build_pair(width: u32, height: u32, mag: u8) -> (Vec<u8>, Vec<u8>) {
@@ -36,12 +39,12 @@ fn build_pair(width: u32, height: u32, mag: u8) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn main() {
-    let client = CudaRuntime::client(&Default::default());
+    let client = Backend::client(&Default::default());
 
     let width = 256_u32;
     let height = 256_u32;
 
-    let mut s = Ssim2::<CudaRuntime>::new(client, width, height).expect("Ssim2::new");
+    let mut s = Ssim2::<Backend>::new(client, width, height).expect("Ssim2::new");
 
     for mag in [0u8, 1, 4, 12, 32] {
         let (a, b) = build_pair(width, height, mag);

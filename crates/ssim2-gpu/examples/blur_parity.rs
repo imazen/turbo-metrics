@@ -7,7 +7,10 @@
 //!
 //! The IIR is non-trivial; this is the load-bearing parity gate.
 
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use cubecl::prelude::*;
 use ssim2_gpu::kernels::{blur, transpose};
 
@@ -21,7 +24,7 @@ fn cpu_blur(src: &[f32], width: usize, height: usize) -> Vec<f32> {
 }
 
 fn run_case(width: u32, height: u32, name: &str, src: &[f32]) -> bool {
-    let client = CudaRuntime::client(&Default::default());
+    let client = Backend::client(&Default::default());
     let n = (width as usize) * (height as usize);
     assert_eq!(src.len(), n);
 
@@ -37,7 +40,7 @@ fn run_case(width: u32, height: u32, name: &str, src: &[f32]) -> bool {
 
     unsafe {
         // 1. v-pass on src.
-        blur::blur_pass_kernel::launch_unchecked::<CudaRuntime>(
+        blur::blur_pass_kernel::launch_unchecked::<Backend>(
             &client,
             CubeCount::Static(blur_cubes_w.max(1), 1, 1),
             CubeDim::new_1d(blur::BLOCK_WIDTH),
@@ -47,7 +50,7 @@ fn run_case(width: u32, height: u32, name: &str, src: &[f32]) -> bool {
             height,
         );
         // 2. transpose v_h → t_h.
-        transpose::transpose_kernel::launch_unchecked::<CudaRuntime>(
+        transpose::transpose_kernel::launch_unchecked::<Backend>(
             &client,
             CubeCount::Static(cubes_1d.max(1), 1, 1),
             CubeDim::new_1d(TPB_1D),
@@ -57,7 +60,7 @@ fn run_case(width: u32, height: u32, name: &str, src: &[f32]) -> bool {
             height,
         );
         // 3. v-pass on transposed.
-        blur::blur_pass_kernel::launch_unchecked::<CudaRuntime>(
+        blur::blur_pass_kernel::launch_unchecked::<Backend>(
             &client,
             CubeCount::Static(blur_cubes_h.max(1), 1, 1),
             CubeDim::new_1d(blur::BLOCK_WIDTH),

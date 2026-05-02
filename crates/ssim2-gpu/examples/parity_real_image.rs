@@ -6,7 +6,10 @@
 //! Target: |gpu - cpu| / cpu < 0.5 % across non-trivial perturbations.
 
 use cubecl::Runtime;
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use ssim2_gpu::Ssim2;
 use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic, Xyb};
 
@@ -69,11 +72,11 @@ fn cpu_score(a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
 }
 
 fn main() {
-    let client = CudaRuntime::client(&Default::default());
+    let client = Backend::client(&Default::default());
     let width = 256_usize;
     let height = 256_usize;
 
-    let mut s = Ssim2::<CudaRuntime>::new(client, width as u32, height as u32).expect("new");
+    let mut s = Ssim2::<Backend>::new(client, width as u32, height as u32).expect("new");
 
     println!("{:>5}  {:>10}  {:>10}  {:>9}", "mag", "cpu", "gpu", "Δ");
     let mut all_ok = true;

@@ -3,7 +3,10 @@
 //! `Ssim2::compute(ref, dis)` to within 1e-4 absolute.
 
 use cubecl::Runtime;
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use ssim2_gpu::{Ssim2, Ssim2Batch};
 
 const CORPUS_DIR: &str = "../dssim-cuda/test_data";
@@ -28,17 +31,17 @@ fn main() {
         .collect();
 
     // Reference path: one Ssim2 instance, run compute() per pair.
-    let client = CudaRuntime::client(&Default::default());
-    let mut single = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut single = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     let single_results: Vec<f64> = dis
         .iter()
         .map(|d| single.compute(&src_bytes, d).expect("compute").score)
         .collect();
 
     // Batch path: one Ssim2Batch handles all 6 in a single compute_batch.
-    let client = CudaRuntime::client(&Default::default());
+    let client = Backend::client(&Default::default());
     let mut batch =
-        Ssim2Batch::<CudaRuntime>::new(client, w, h, dis.len() as u32).expect("Ssim2Batch::new");
+        Ssim2Batch::<Backend>::new(client, w, h, dis.len() as u32).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
     let batch_results = batch.compute_batch(&dis).expect("compute_batch");
 

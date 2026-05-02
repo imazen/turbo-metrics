@@ -7,7 +7,10 @@
 //! GPU pipeline implementation.
 
 use cubecl::Runtime;
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use ssim2_gpu::Ssim2;
 use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic, Xyb};
 
@@ -46,8 +49,8 @@ fn main() {
     let (src_bytes, w, h) = load_rgb8(dir.join("source.png").to_str().unwrap());
     println!("source: {}×{}", w, h);
 
-    let client = CudaRuntime::client(&Default::default());
-    let mut s = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut s = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
 
     println!("{:>4}  {:>10}  {:>10}  {:>9}  {:>7}", "q", "cpu", "gpu", "Δ", "rel");
     let mut all_ok = true;

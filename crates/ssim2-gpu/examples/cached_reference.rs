@@ -4,7 +4,10 @@
 //! both paths and reports the delta.
 
 use cubecl::Runtime;
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use ssim2_gpu::Ssim2;
 
 const CORPUS_DIR: &str = "../dssim-cuda/test_data";
@@ -23,13 +26,13 @@ fn main() {
     let (src_bytes, w, h) = load_rgb8(dir.join("source.png").to_str().unwrap());
     println!("source: {}×{}", w, h);
 
-    let client_a = CudaRuntime::client(&Default::default());
-    let client_b = CudaRuntime::client(&Default::default());
+    let client_a = Backend::client(&Default::default());
+    let client_b = Backend::client(&Default::default());
 
     // Direct path.
-    let mut s_direct = Ssim2::<CudaRuntime>::new(client_a, w, h).expect("direct");
+    let mut s_direct = Ssim2::<Backend>::new(client_a, w, h).expect("direct");
     // Cached path.
-    let mut s_cached = Ssim2::<CudaRuntime>::new(client_b, w, h).expect("cached");
+    let mut s_cached = Ssim2::<Backend>::new(client_b, w, h).expect("cached");
     s_cached.set_reference(&src_bytes).expect("set_reference");
 
     println!("{:>4}  {:>10}  {:>10}  {:>9}", "q", "direct", "cached", "Δ");

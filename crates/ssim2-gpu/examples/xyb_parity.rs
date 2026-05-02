@@ -4,7 +4,10 @@
 //! Tolerance allows ~3 ulp drift from the `cbrtf → powf(_,1/3)`
 //! substitution called out in the porting plan.
 
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use cubecl::prelude::*;
 use ssim2_gpu::kernels::xyb;
 
@@ -33,7 +36,7 @@ fn cpu_xyb(r: f32, g: f32, b: f32) -> [f32; 3] {
 }
 
 fn main() {
-    let client = CudaRuntime::client(&Default::default());
+    let client = Backend::client(&Default::default());
 
     // 1024 random-ish samples covering the typical [0, 1] linear-RGB
     // range plus a few near-zero / near-one corners.
@@ -64,7 +67,7 @@ fn main() {
     const TPB: u32 = 256;
     let cubes = ((n as u32) + TPB - 1) / TPB;
     unsafe {
-        xyb::linear_to_xyb_planar_kernel::launch_unchecked::<CudaRuntime>(
+        xyb::linear_to_xyb_planar_kernel::launch_unchecked::<Backend>(
             &client,
             CubeCount::Static(cubes, 1, 1),
             CubeDim::new_1d(TPB),

@@ -19,7 +19,10 @@
 use std::time::Instant;
 
 use cubecl::Runtime;
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use ssim2_gpu::{Ssim2, Ssim2Batch};
 
 const CORPUS_DIR: &str = "../dssim-cuda/test_data";
@@ -52,8 +55,8 @@ fn run(qs_per_call: usize) {
     }
 
     // Sequential (cached-reference) path.
-    let client = CudaRuntime::client(&Default::default());
-    let mut sequential = Ssim2::<CudaRuntime>::new(client, w, h).expect("Ssim2::new");
+    let client = Backend::client(&Default::default());
+    let mut sequential = Ssim2::<Backend>::new(client, w, h).expect("Ssim2::new");
     sequential.set_reference(&src_bytes).expect("set_reference");
     // Warmup.
     for d in &dis {
@@ -72,8 +75,8 @@ fn run(qs_per_call: usize) {
     let seq_per = seq_total / qs_per_call as f64;
 
     // Batched path.
-    let client = CudaRuntime::client(&Default::default());
-    let mut batch = Ssim2Batch::<CudaRuntime>::new(client, w, h, qs_per_call as u32)
+    let client = Backend::client(&Default::default());
+    let mut batch = Ssim2Batch::<Backend>::new(client, w, h, qs_per_call as u32)
         .expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
     // Warmup.

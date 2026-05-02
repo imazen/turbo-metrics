@@ -1,0 +1,134 @@
+name: ssim2-gpu CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "crates/ssim2-gpu/**"
+      - "crates/dssim-cuda/test_data/**"
+      - ".github/workflows/ssim2-gpu-ci.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - "crates/ssim2-gpu/**"
+      - "crates/dssim-cuda/test_data/**"
+      - ".github/workflows/ssim2-gpu-ci.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+jobs:
+  # Compile-only check across host platforms. CUDA-less builds prove
+  # the kernels and host code stay portable; the runtime tests below
+  # validate behaviour where a GPU is available.
+  compile:
+    name: Compile (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ssim2-gpu-${{ matrix.os }}
+      - name: Build (no_default_features + wgpu)
+        run: |
+          cargo build -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --all-targets
+
+  # Runtime tests on macOS via Metal (cubecl-wgpu's Metal backend).
+  # macOS provides Metal natively, no Vulkan ICD setup needed. Both
+  # Apple Silicon and Intel exercise the wgpu kernels end-to-end.
+  metal-tests:
+    name: Tests (Metal, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ssim2-gpu-tests-${{ matrix.os }}
+
+      - name: Verify Metal availability
+        run: system_profiler SPDisplaysDataType | head -40 || true
+
+      - name: Doctests
+        run: |
+          cargo test -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --doc
+
+      - name: Integration tests (parity_lock)
+        run: |
+          cargo test -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --test parity_lock
+
+      - name: Per-kernel parity examples (smoke)
+        run: |
+          # The kernel-level parity examples exercise specific stages
+          # (sRGB / XYB / blur) against the CPU reference; passing here
+          # means the wgpu Metal backend produces matching output for
+          # those kernels on this hardware.
+          cargo run -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --example srgb_parity
+          cargo run -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --example xyb_parity
+          cargo run -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --example blur_parity
+
+      - name: Full-pipeline smoke (end_to_end)
+        run: |
+          cargo run -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --example end_to_end
+
+      - name: JPEG-corpus parity vs CPU ssimulacra2
+        run: |
+          cargo run -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --example parity_jpeg_corpus
+
+      - name: Cached + batched smoke
+        run: |
+          cargo run -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --example cached_reference
+          cargo run -p ssim2-gpu \
+            --no-default-features --features wgpu \
+            --release --example batch_smoke
+
+  # Windows runtime tests via wgpu's DX12 backend. GitHub-hosted
+  # windows-latest exposes a software D3D12 adapter (WARP) that wgpu
+  # can use, plus any installed GPU driver. The compute shaders we
+  # use (no atomic<f64>, no warp ops, no Tensor cores) are squarely in
+  # WARP's supported feature set, so this should run end-to-end.
+  dx12-tests:
+    name: Tests (DX12, windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ssim2-gpu-tests-windows
+      - name: Doctests
+        run: |
+          cargo test -p ssim2-gpu --no-default-features --features wgpu --release --doc
+      - name: Integration tests
+        run: |
+          cargo test -p ssim2-gpu --no-default-features --features wgpu --release --test parity_lock

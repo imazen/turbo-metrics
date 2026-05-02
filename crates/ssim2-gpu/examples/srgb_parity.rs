@@ -5,7 +5,10 @@
 //! kernel, and compares against the CPU formula — should be bit-exact
 //! since the kernel computes the same expression at byte resolution.
 
-use cubecl::cuda::CudaRuntime;
+#[cfg(feature = "cuda")]
+type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 use cubecl::prelude::*;
 use ssim2_gpu::kernels::srgb;
 
@@ -21,7 +24,7 @@ fn cpu_srgb_to_linear(byte: u8) -> f32 {
 }
 
 fn main() {
-    let client = CudaRuntime::client(&Default::default());
+    let client = Backend::client(&Default::default());
 
     // 16 × 16 = 256 pixels, packed RGB; each pixel's channels are the
     // same byte i for full coverage of the LUT.
@@ -42,7 +45,7 @@ fn main() {
     const TPB: u32 = 256;
     let cubes = ((n_pixels as u32) + TPB - 1) / TPB;
     unsafe {
-        srgb::srgb_u8_to_linear_planar_kernel::launch_unchecked::<CudaRuntime>(
+        srgb::srgb_u8_to_linear_planar_kernel::launch_unchecked::<Backend>(
             &client,
             CubeCount::Static(cubes, 1, 1),
             CubeDim::new_1d(TPB),
