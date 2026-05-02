@@ -172,11 +172,11 @@ impl<R: Runtime> Ssim2<R> {
     ///
     /// ```no_run
     /// use cubecl::Runtime;
-    /// use cubecl::cuda::CudaRuntime;
+    /// use cubecl::wgpu::WgpuRuntime;
     /// use ssim2_gpu::Ssim2;
     ///
-    /// let client = CudaRuntime::client(&Default::default());
-    /// let s = Ssim2::<CudaRuntime>::new(client, 1024, 768)?;
+    /// let client = WgpuRuntime::client(&Default::default());
+    /// let s = Ssim2::<WgpuRuntime>::new(client, 1024, 768)?;
     /// assert_eq!(s.dimensions(), (1024, 768));
     /// # Ok::<(), ssim2_gpu::Error>(())
     /// ```
@@ -273,11 +273,11 @@ impl<R: Runtime> Ssim2<R> {
     ///
     /// ```no_run
     /// use cubecl::Runtime;
-    /// use cubecl::cuda::CudaRuntime;
+    /// use cubecl::wgpu::WgpuRuntime;
     /// use ssim2_gpu::Ssim2;
     ///
-    /// let client = CudaRuntime::client(&Default::default());
-    /// let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+    /// let client = WgpuRuntime::client(&Default::default());
+    /// let mut s = Ssim2::<WgpuRuntime>::new(client, 256, 256)?;
     /// let r = vec![0_u8; 256 * 256 * 3];
     /// let d = vec![0_u8; 256 * 256 * 3];
     /// let score = s.compute(&r, &d)?.score;
@@ -312,11 +312,11 @@ impl<R: Runtime> Ssim2<R> {
     ///
     /// ```no_run
     /// use cubecl::Runtime;
-    /// use cubecl::cuda::CudaRuntime;
+    /// use cubecl::wgpu::WgpuRuntime;
     /// use ssim2_gpu::Ssim2;
     ///
-    /// let client = CudaRuntime::client(&Default::default());
-    /// let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+    /// let client = WgpuRuntime::client(&Default::default());
+    /// let mut s = Ssim2::<WgpuRuntime>::new(client, 256, 256)?;
     /// let r = vec![0_u8; 256 * 256 * 3];
     /// s.set_reference(&r)?;
     /// assert!(s.has_cached_reference());
@@ -355,11 +355,11 @@ impl<R: Runtime> Ssim2<R> {
     ///
     /// ```no_run
     /// use cubecl::Runtime;
-    /// use cubecl::cuda::CudaRuntime;
+    /// use cubecl::wgpu::WgpuRuntime;
     /// use ssim2_gpu::{Error, Ssim2};
     ///
-    /// let client = CudaRuntime::client(&Default::default());
-    /// let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+    /// let client = WgpuRuntime::client(&Default::default());
+    /// let mut s = Ssim2::<WgpuRuntime>::new(client, 256, 256)?;
     /// // Without set_reference first:
     /// let d = vec![0_u8; 256 * 256 * 3];
     /// assert!(matches!(

@@ -134,11 +134,11 @@ impl<R: Runtime> Ssim2Batch<R> {
     ///
     /// ```no_run
     /// use cubecl::Runtime;
-    /// use cubecl::cuda::CudaRuntime;
+    /// use cubecl::wgpu::WgpuRuntime;
     /// use ssim2_gpu::Ssim2Batch;
     ///
-    /// let client = CudaRuntime::client(&Default::default());
-    /// let b = Ssim2Batch::<CudaRuntime>::new(client, 256, 256, 4)?;
+    /// let client = WgpuRuntime::client(&Default::default());
+    /// let b = Ssim2Batch::<WgpuRuntime>::new(client, 256, 256, 4)?;
     /// assert_eq!(b.batch_size(), 4);
     /// assert_eq!(b.dimensions(), (256, 256));
     /// # Ok::<(), ssim2_gpu::Error>(())
@@ -213,11 +213,11 @@ impl<R: Runtime> Ssim2Batch<R> {
     ///
     /// ```no_run
     /// use cubecl::Runtime;
-    /// use cubecl::cuda::CudaRuntime;
+    /// use cubecl::wgpu::WgpuRuntime;
     /// use ssim2_gpu::Ssim2Batch;
     ///
-    /// let client = CudaRuntime::client(&Default::default());
-    /// let mut batch = Ssim2Batch::<CudaRuntime>::new(client, 256, 256, 8)?;
+    /// let client = WgpuRuntime::client(&Default::default());
+    /// let mut batch = Ssim2Batch::<WgpuRuntime>::new(client, 256, 256, 8)?;
     /// let r = vec![0_u8; 256 * 256 * 3];
     /// batch.set_reference(&r)?;
     ///

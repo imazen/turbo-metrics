@@ -18,11 +18,11 @@
 //!
 //! ```no_run
 //! use cubecl::Runtime;
-//! use cubecl::cuda::CudaRuntime;
+//! use cubecl::wgpu::WgpuRuntime;
 //! use ssim2_gpu::Ssim2;
 //!
-//! let client = CudaRuntime::client(&Default::default());
-//! let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+//! let client = WgpuRuntime::client(&Default::default());
+//! let mut s = Ssim2::<WgpuRuntime>::new(client, 256, 256)?;
 //!
 //! let ref_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
 //! let dist_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
@@ -36,12 +36,12 @@
 //!
 //! ```no_run
 //! use cubecl::Runtime;
-//! use cubecl::cuda::CudaRuntime;
+//! use cubecl::wgpu::WgpuRuntime;
 //! use ssim2_gpu::Ssim2;
 //!
 //! # fn candidates() -> Vec<Vec<u8>> { vec![] }
-//! let client = CudaRuntime::client(&Default::default());
-//! let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+//! let client = WgpuRuntime::client(&Default::default());
+//! let mut s = Ssim2::<WgpuRuntime>::new(client, 256, 256)?;
 //!
 //! let ref_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
 //! s.set_reference(&ref_srgb)?;
@@ -57,12 +57,12 @@
 //!
 //! ```no_run
 //! use cubecl::Runtime;
-//! use cubecl::cuda::CudaRuntime;
+//! use cubecl::wgpu::WgpuRuntime;
 //! use ssim2_gpu::Ssim2Batch;
 //!
 //! # fn collect_distorted() -> Vec<Vec<u8>> { vec![] }
-//! let client = CudaRuntime::client(&Default::default());
-//! let mut batch = Ssim2Batch::<CudaRuntime>::new(client, 256, 256, 8)?;
+//! let client = WgpuRuntime::client(&Default::default());
+//! let mut batch = Ssim2Batch::<WgpuRuntime>::new(client, 256, 256, 8)?;
 //!
 //! let ref_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
 //! batch.set_reference(&ref_srgb)?;
