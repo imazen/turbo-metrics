@@ -20,6 +20,7 @@ members = [
     "crates/nvptx-builder",
     "crates/nvptx-std",
     "crates/quick-stats",
+    "crates/ssim2-gpu",
     "crates/ssimulacra2-cuda",
     "crates/ssimulacra2-cuda-kernel",
     "crates/zensim-cuda",
