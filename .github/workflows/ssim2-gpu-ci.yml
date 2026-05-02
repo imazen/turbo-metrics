@@ -66,28 +66,36 @@ jobs:
       - name: Verify Metal availability
         run: system_profiler SPDisplaysDataType | head -40 || true
 
+      # Run kernel-level parity *first* so a regression points at the
+      # specific kernel. Keep all later steps gated on `if: always()`
+      # so a single failure doesn't abort the rest — the goal in CI is
+      # to get per-stage signal, not to bail on the first red.
+      - name: Per-kernel parity — sRGB
+        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example srgb_parity
+      - name: Per-kernel parity — XYB
+        if: always()
+        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example xyb_parity
+      - name: Per-kernel parity — blur (recursive Gaussian)
+        if: always()
+        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example blur_parity
       - name: Doctests
+        if: always()
         run: cargo test -p ssim2-gpu --no-default-features --features wgpu --release --doc
-
       - name: Integration tests (parity_lock)
+        if: always()
         run: cargo test -p ssim2-gpu --no-default-features --features wgpu --release --test parity_lock
-
-      - name: Per-kernel parity examples (smoke)
-        run: |
-          cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example srgb_parity
-          cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example xyb_parity
-          cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example blur_parity
-
       - name: Full-pipeline smoke (end_to_end)
+        if: always()
         run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example end_to_end
-
       - name: JPEG-corpus parity vs CPU ssimulacra2
+        if: always()
         run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example parity_jpeg_corpus
-
-      - name: Cached + batched smoke
-        run: |
-          cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example cached_reference
-          cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example batch_smoke
+      - name: Cached-reference smoke
+        if: always()
+        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example cached_reference
+      - name: Batched smoke
+        if: always()
+        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example batch_smoke
 
   # Windows runtime tests via wgpu's DX12 backend. GitHub-hosted
   # windows-latest exposes a software D3D12 adapter (WARP) that wgpu
