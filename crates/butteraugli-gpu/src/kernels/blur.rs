@@ -123,3 +123,55 @@ pub fn vertical_blur_kernel(
 
     dst[y * w + x] = sum / wsum;
 }
+
+/// Batched vertical blur — `batch_size` independent `width × height`
+/// planes packed contiguously into `src` and `dst`. Each thread
+/// handles one pixel; per-image y boundaries are clamped within each
+/// plane (so the blur never bleeds across image boundaries).
+#[cube(launch_unchecked)]
+pub fn vertical_blur_batched_kernel(
+    src: &Array<f32>,
+    dst: &mut Array<f32>,
+    width: u32,
+    height: u32,
+    sigma: f32,
+    plane_stride: u32,
+    batch_size: u32,
+) {
+    let idx = ABSOLUTE_POS;
+    let total = (plane_stride * batch_size) as usize;
+    if idx >= total {
+        terminate!();
+    }
+    let plane_us = plane_stride as usize;
+    let w = width as usize;
+    let h = height as usize;
+    let batch_idx = idx / plane_us;
+    let local_idx = idx - batch_idx * plane_us;
+    if local_idx >= w * h {
+        // Padding within a plane (when plane_stride > w*h) — leave as 0.
+        terminate!();
+    }
+    let y = local_idx / w;
+    let x = local_idx - y * w;
+    let plane_off = batch_idx * plane_us;
+
+    let raw = u32::cast_from(M * sigma);
+    let radius_us = u32::max(raw, 1u32) as usize;
+    let begin = usize::saturating_sub(y, radius_us);
+    let end = u32::min((y + radius_us) as u32, (h - 1) as u32) as usize;
+
+    let mut sum = 0.0f32;
+    let mut wsum = 0.0f32;
+    let mut i = begin;
+    while i <= end {
+        let i32_ = i as u32;
+        let y32 = y as u32;
+        let dist = (u32::saturating_sub(i32_, y32) + u32::saturating_sub(y32, i32_)) as f32;
+        let weight = gauss(dist, sigma);
+        sum += src[plane_off + i * w + x] * weight;
+        wsum += weight;
+        i += 1;
+    }
+    dst[plane_off + y * w + x] = sum / wsum;
+}

@@ -43,6 +43,25 @@ pub fn mask_to_error_mul_kernel(
     block_diff_ac[idx] = block_diff_ac[idx] + MASK_TO_ERROR_MUL * diff * diff;
 }
 
+/// Batched mask_to_error_mul: `blurred1` is a single broadcast plane
+/// (cached reference, indexed `idx % plane_stride`), `blurred2` and
+/// `block_diff_ac` are `batch_size` planes packed contiguously.
+#[cube(launch_unchecked)]
+pub fn mask_to_error_mul_batched_kernel(
+    blurred1: &Array<f32>,
+    blurred2: &Array<f32>,
+    block_diff_ac: &mut Array<f32>,
+    plane_stride: u32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= block_diff_ac.len() {
+        terminate!();
+    }
+    let local = idx - (idx / (plane_stride as usize)) * (plane_stride as usize);
+    let diff = blurred1[local] - blurred2[idx];
+    block_diff_ac[idx] = block_diff_ac[idx] + MASK_TO_ERROR_MUL * diff * diff;
+}
+
 /// `dst = sqrt(MUL · |x| + MUL·BIAS) − sqrt(MUL·BIAS)` — used to feed the masking blur.
 #[cube(launch_unchecked)]
 pub fn diff_precompute_kernel(src: &Array<f32>, dst: &mut Array<f32>) {

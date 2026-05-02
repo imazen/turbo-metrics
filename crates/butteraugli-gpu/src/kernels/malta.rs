@@ -472,3 +472,116 @@ pub fn malta_diff_map_lf_kernel(
     let out_idx = (y * width + x) as usize;
     block_diff_ac[out_idx] = block_diff_ac[out_idx] + result;
 }
+
+/// Cooperative tile load with broadcast reference and per-batch
+/// distorted slot. `lum0_off` lets the reference share across slots
+/// (set to 0); `lum1_off = batch_idx * plane_stride` selects the
+/// distorted slot. The accumulator output is per-slot.
+#[cube]
+fn load_tile_split(
+    lum0: &Array<f32>,
+    lum0_off: u32,
+    lum1: &Array<f32>,
+    lum1_off: u32,
+    width: u32,
+    height: u32,
+    norm1: f32,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
+    tile: &mut SharedMemory<f32>,
+) {
+    let tx = UNIT_POS_X;
+    let ty = UNIT_POS_Y;
+    let bx = CUBE_POS_X;
+    let by = CUBE_POS_Y;
+    let topleftx = (bx * TILE_SIZE) as i32 - HALO as i32;
+    let toplefty = (by * TILE_SIZE) as i32 - HALO as i32;
+    let serial_idx = tx + ty * TILE_SIZE;
+    let serial_stride = TILE_SIZE * TILE_SIZE;
+
+    let mut i = serial_idx;
+    while i < SHARED_TOTAL {
+        let work_x = topleftx + (i % SHARED_SIZE) as i32;
+        let work_y = toplefty + (i / SHARED_SIZE) as i32;
+        let in_bounds =
+            work_x >= 0 && work_x < width as i32 && work_y >= 0 && work_y < height as i32;
+        let i_us = i as usize;
+        if in_bounds {
+            let global_idx = (work_y as u32 * width + work_x as u32) as usize;
+            let l0 = lum0[(lum0_off as usize) + global_idx];
+            let l1 = lum1[(lum1_off as usize) + global_idx];
+            tile[i_us] = compute_diff(l0, l1, norm1, norm2_0gt1, norm2_0lt1);
+        } else {
+            tile[i_us] = f32::new(0.0);
+        }
+        i += serial_stride;
+    }
+}
+
+/// Batched Malta HF kernel: one cached reference (broadcast) vs
+/// `batch_size` distorted planes packed contiguously into `lum1`.
+/// Launch with `cube_count = (ceil(w/16), ceil(h/16), batch_size)`
+/// and `cube_dim = (16, 16, 1)`. `block_diff_ac` is the per-slot AC
+/// accumulator (also `batch_size` planes packed contiguously).
+#[cube(launch_unchecked)]
+pub fn malta_diff_map_hf_batched_kernel(
+    lum0: &Array<f32>,
+    lum1: &Array<f32>,
+    block_diff_ac: &mut Array<f32>,
+    width: u32,
+    height: u32,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
+    norm1: f32,
+    plane_stride: u32,
+) {
+    let batch_idx = CUBE_POS_Z;
+    let lum1_off = batch_idx * plane_stride;
+    let mut tile = SharedMemory::<f32>::new(SHARED_TOTAL_USIZE);
+    load_tile_split(
+        lum0, 0, lum1, lum1_off, width, height, norm1, norm2_0gt1, norm2_0lt1, &mut tile,
+    );
+    sync_cube();
+
+    let x = CUBE_POS_X * TILE_SIZE + UNIT_POS_X;
+    let y = CUBE_POS_Y * TILE_SIZE + UNIT_POS_Y;
+    if x >= width || y >= height {
+        terminate!();
+    }
+    let pos = ((UNIT_POS_Y + HALO) * SHARED_SIZE + (UNIT_POS_X + HALO)) as i32;
+    let result = malta_unit_hf(&tile, pos, SHARED_SIZE as i32);
+    let out_idx = (lum1_off + y * width + x) as usize;
+    block_diff_ac[out_idx] = block_diff_ac[out_idx] + result;
+}
+
+/// Batched Malta LF kernel — see `malta_diff_map_hf_batched_kernel`.
+#[cube(launch_unchecked)]
+pub fn malta_diff_map_lf_batched_kernel(
+    lum0: &Array<f32>,
+    lum1: &Array<f32>,
+    block_diff_ac: &mut Array<f32>,
+    width: u32,
+    height: u32,
+    norm2_0gt1: f32,
+    norm2_0lt1: f32,
+    norm1: f32,
+    plane_stride: u32,
+) {
+    let batch_idx = CUBE_POS_Z;
+    let lum1_off = batch_idx * plane_stride;
+    let mut tile = SharedMemory::<f32>::new(SHARED_TOTAL_USIZE);
+    load_tile_split(
+        lum0, 0, lum1, lum1_off, width, height, norm1, norm2_0gt1, norm2_0lt1, &mut tile,
+    );
+    sync_cube();
+
+    let x = CUBE_POS_X * TILE_SIZE + UNIT_POS_X;
+    let y = CUBE_POS_Y * TILE_SIZE + UNIT_POS_Y;
+    if x >= width || y >= height {
+        terminate!();
+    }
+    let pos = ((UNIT_POS_Y + HALO) * SHARED_SIZE + (UNIT_POS_X + HALO)) as i32;
+    let result = malta_unit_lf(&tile, pos, SHARED_SIZE as i32);
+    let out_idx = (lum1_off + y * width + x) as usize;
+    block_diff_ac[out_idx] = block_diff_ac[out_idx] + result;
+}

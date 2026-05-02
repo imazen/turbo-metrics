@@ -29,8 +29,10 @@
 
 pub mod kernels;
 pub mod pipeline;
+pub mod pipeline_batch;
 
 pub use pipeline::Butteraugli;
+pub use pipeline_batch::ButteraugliBatch;
 
 use cubecl::prelude::*;
 

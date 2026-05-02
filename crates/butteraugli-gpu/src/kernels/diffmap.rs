@@ -82,6 +82,89 @@ pub fn l2_diff_write_kernel(
     dst[idx] = weight * diff * diff;
 }
 
+/// Batched broadcast l2_diff: `src1` is one plane (cached reference),
+/// `src2` and `dst` are `N` planes packed contiguously. Accumulates.
+#[cube(launch_unchecked)]
+pub fn l2_diff_broadcast_batched_kernel(
+    src1: &Array<f32>,
+    src2: &Array<f32>,
+    dst: &mut Array<f32>,
+    plane_stride: u32,
+    weight: f32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    let local = idx - (idx / (plane_stride as usize)) * (plane_stride as usize);
+    let diff = src1[local] - src2[idx];
+    dst[idx] = dst[idx] + weight * diff * diff;
+}
+
+/// Batched broadcast write-only l2_diff. Overwrites.
+#[cube(launch_unchecked)]
+pub fn l2_diff_write_broadcast_batched_kernel(
+    src1: &Array<f32>,
+    src2: &Array<f32>,
+    dst: &mut Array<f32>,
+    plane_stride: u32,
+    weight: f32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    let local = idx - (idx / (plane_stride as usize)) * (plane_stride as usize);
+    let diff = src1[local] - src2[idx];
+    dst[idx] = weight * diff * diff;
+}
+
+/// Batched broadcast asymmetric L2 diff.
+#[cube(launch_unchecked)]
+pub fn l2_asym_diff_broadcast_batched_kernel(
+    src1: &Array<f32>,
+    src2: &Array<f32>,
+    dst: &mut Array<f32>,
+    plane_stride: u32,
+    weight_gt: f32,
+    weight_lt: f32,
+) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    let local = idx - (idx / (plane_stride as usize)) * (plane_stride as usize);
+    let v0 = src1[local];
+    let v1 = src2[idx];
+    let vw_gt = weight_gt * 0.8;
+    let vw_lt = weight_lt * 0.8;
+    let diff = v0 - v1;
+    let mut total = dst[idx] + diff * diff * vw_gt;
+
+    let fabs0 = f32::abs(v0);
+    let too_small = 0.4 * fabs0;
+    let too_big = fabs0;
+
+    let v = if v0 < 0.0 {
+        if v1 > -too_small {
+            v1 + too_small
+        } else if v1 < -too_big {
+            -v1 - too_big
+        } else {
+            f32::new(0.0)
+        }
+    } else if v1 < too_small {
+        too_small - v1
+    } else if v1 > too_big {
+        v1 - too_big
+    } else {
+        f32::new(0.0)
+    };
+
+    total += vw_lt * v * v;
+    dst[idx] = total;
+}
+
 /// Asymmetric L2 — primary squared diff plus a half-open penalty for
 /// distorted values that drop too far below or rise too far above the
 /// reference's magnitude band. Matches the CPU `L2DiffAsymmetric`.

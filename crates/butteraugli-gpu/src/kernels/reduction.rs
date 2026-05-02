@@ -128,3 +128,71 @@ pub fn reduce<R: Runtime>(
         pnorm_3,
     }
 }
+
+/// Batched max-only reduction — one max per image, written as f32 bit
+/// patterns into `output_max_bits[0..batch_size]`. Caller must zero the
+/// output buffer before launch.
+///
+/// Launch geometry: `cube_count = (CUBES_PER_IMAGE, batch_size, 1)`,
+/// `cube_dim = (THREADS_PER_CUBE, 1, 1)`. Each cube owns one image's
+/// plane and reduces it grid-strided.
+#[cube(launch_unchecked)]
+fn batched_max_reduce_kernel(
+    diffmap: &Array<f32>,
+    output_max_bits: &mut Array<Atomic<u32>>,
+    plane_stride: u32,
+) {
+    let batch_idx = CUBE_POS_Y;
+    let tid_in_plane = UNIT_POS_X + CUBE_POS_X * (CUBE_DIM_X as u32);
+    let stride_per_plane = CUBE_COUNT_X as u32 * (CUBE_DIM_X as u32);
+    let plane_off = (batch_idx * plane_stride) as usize;
+    let plane_us = plane_stride as usize;
+
+    let mut local_max = 0.0f32;
+    let mut i = tid_in_plane as usize;
+    while i < plane_us {
+        let v = diffmap[plane_off + i];
+        if v > local_max {
+            local_max = v;
+        }
+        i += stride_per_plane as usize;
+    }
+    let bits = u32::reinterpret(local_max);
+    output_max_bits[batch_idx as usize].fetch_max(bits);
+}
+
+/// Run batched max reduction. Returns `Vec<f32>` of length `batch_size`.
+pub fn reduce_batched<R: Runtime>(
+    client: &ComputeClient<R>,
+    diffmap_handle: cubecl::server::Handle,
+    plane_stride: u32,
+    batch_size: u32,
+) -> Vec<f32> {
+    let max_bits_handle =
+        client.create_from_slice(u32::as_bytes(&vec![0_u32; batch_size as usize]));
+    const CUBES_PER_IMAGE: u32 = 8;
+    const THREADS: u32 = 256;
+    let cube_count = CubeCount::Static(CUBES_PER_IMAGE, batch_size, 1);
+    let cube_dim = CubeDim::new_1d(THREADS);
+
+    unsafe {
+        batched_max_reduce_kernel::launch_unchecked::<R>(
+            client,
+            cube_count,
+            cube_dim,
+            ArrayArg::from_raw_parts(
+                diffmap_handle,
+                (plane_stride as usize) * (batch_size as usize),
+            ),
+            ArrayArg::from_raw_parts(max_bits_handle.clone(), batch_size as usize),
+            plane_stride,
+        );
+    }
+    let bytes = client
+        .read_one(max_bits_handle)
+        .expect("read_one batched max");
+    u32::from_bytes(&bytes)
+        .iter()
+        .map(|&b| f32::from_bits(b))
+        .collect()
+}

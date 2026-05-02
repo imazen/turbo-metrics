@@ -1129,6 +1129,42 @@ impl<R: Runtime> Butteraugli<R> {
         self.read_plane(&self.diffmap_buf)
     }
 
+    /// True iff [`set_reference`] has been called and the reference-side
+    /// state is valid.
+    pub fn has_cached_reference(&self) -> bool {
+        self.has_cached_reference
+    }
+
+    /// Half-resolution sibling for the multi-resolution pass. Public so
+    /// [`crate::ButteraugliBatch`] can reach into the cached reference
+    /// state on both resolutions.
+    pub fn half_res(&self) -> Option<&Self> {
+        self.half_res.as_deref()
+    }
+
+    /// Cached reference frequency band `freq_a[band][channel]`. Returns
+    /// the underlying CubeCL handle so a batched scorer can broadcast it
+    /// against many distorted-side planes.
+    pub fn cached_freq(&self, band: usize, channel: usize) -> &cubecl::server::Handle {
+        &self.freq_a[band][channel]
+    }
+
+    /// Cached reference XYB plane.
+    pub fn cached_xyb(&self, channel: usize) -> &cubecl::server::Handle {
+        &self.lin_a[channel]
+    }
+
+    /// Cached blurred image-A mask plane (input to fuzzy_erosion AND
+    /// to mask_to_error_mul).
+    pub fn cached_blurred_a(&self) -> &cubecl::server::Handle {
+        &self.cached_blurred_a
+    }
+
+    /// Cached fuzzy-erosion mask plane.
+    pub fn cached_mask(&self) -> &cubecl::server::Handle {
+        &self.mask
+    }
+
     fn read_plane(&self, h: &cubecl::server::Handle) -> Vec<f32> {
         let bytes = self.client.read_one(h.clone()).expect("read_one plane");
         f32::from_bytes(&bytes).to_vec()

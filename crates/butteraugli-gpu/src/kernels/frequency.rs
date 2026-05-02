@@ -271,3 +271,16 @@ pub fn copy_plane_kernel(src: &Array<f32>, dst: &mut Array<f32>) {
     }
     dst[idx] = src[idx];
 }
+
+/// Broadcast a single `plane_stride`-sized source into `batch_size`
+/// contiguous slots of `dst`. Used to give the batched compute_diffmap
+/// kernel `batch_size` copies of the cached reference mask.
+#[cube(launch_unchecked)]
+pub fn broadcast_plane_kernel(src: &Array<f32>, dst: &mut Array<f32>, plane_stride: u32) {
+    let idx = ABSOLUTE_POS;
+    if idx >= dst.len() {
+        terminate!();
+    }
+    let local = idx - (idx / (plane_stride as usize)) * (plane_stride as usize);
+    dst[idx] = src[local];
+}
