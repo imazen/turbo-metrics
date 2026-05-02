@@ -399,8 +399,11 @@ name = "butteraugli-gpu"
 version = "0.0.1"
 dependencies = [
  "butteraugli 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "butteraugli-cuda",
  "bytemuck",
  "cubecl",
+ "cudarse-driver",
+ "cudarse-npp",
  "image",
  "imgref",
  "rgb",

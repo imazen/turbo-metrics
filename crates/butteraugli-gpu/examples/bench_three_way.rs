@@ -1,16 +1,8 @@
-//! Wall-clock comparison: CPU butteraugli vs butteraugli-gpu (CubeCL).
-//!
-//! Reports min and median ms/call after warm-up over N iterations on the
-//! same image pair. Per-call cost on GPU includes the host→device upload
-//! of the sRGB buffers and the device→host readback of the (max, sums)
-//! reduction; that's the realistic cost for a one-shot encoder lookup.
-//!
-//! `butteraugli-cuda` (the older PTX implementation) is the natural third
-//! comparison but its `cudarse-npp` dependency uses NPP API symbols that
-//! were removed in CUDA 13.x, so we currently can't link against it on
-//! the same host that has CUDA 13.2 installed for cubecl. Once
-//! `cudarse-npp` is updated to the `_Ctx` variants this example should
-//! grow a third row.
+//! Wall-clock comparison: CPU butteraugli vs butteraugli-cuda (PTX) vs
+//! butteraugli-gpu (CubeCL). Reports min and median ms/call after warm-up
+//! over N iterations on the same image pair. Per-call cost on both GPUs
+//! includes the host→device upload of sRGB inputs and the device→host
+//! readback of the (max, sums) reduction.
 //!
 //! Usage:
 //!   cargo run --release -p butteraugli-gpu --example bench_three_way
@@ -21,6 +13,10 @@ use std::time::Instant;
 
 use butteraugli::{ButteraugliParams, butteraugli};
 use butteraugli_gpu::Butteraugli as GpuButteraugli;
+use cudarse_driver::CuStream;
+use cudarse_npp::image::isu::Malloc;
+use cudarse_npp::image::{C, Image, Img, ImgMut};
+use cudarse_npp::set_stream;
 use image::ImageReader;
 use imgref::ImgVec;
 use rgb::{RGB, RGB8};
@@ -54,7 +50,6 @@ fn load_or_synthetic(path: Option<&str>) -> (Vec<u8>, Vec<u8>, u32, u32) {
         }
         (raw, dist, w, h)
     } else {
-        // Synthetic — exercise multiple sizes
         let w = 1024_u32;
         let h = 1024_u32;
         let mut r = vec![0_u8; (w * h * 3) as usize];
@@ -105,11 +100,11 @@ fn run_size(label: &str, w: u32, h: u32, ref_rgb: &[u8], dist_rgb: &[u8]) {
     let n = (w as usize) * (h as usize);
     let mp = n as f64 / 1_000_000.0;
 
+    // ── CPU butteraugli ──
     let ref_iv = rgb_to_imgvec(ref_rgb, w, h);
     let dist_iv = rgb_to_imgvec(dist_rgb, w, h);
     let params_full = ButteraugliParams::default();
     let params_single = ButteraugliParams::default().with_single_resolution(true);
-
     let (cpu_full_min, cpu_full_med, cpu_full_score) = bench(|| {
         butteraugli(ref_iv.as_ref(), dist_iv.as_ref(), &params_full)
             .unwrap()
@@ -121,56 +116,87 @@ fn run_size(label: &str, w: u32, h: u32, ref_rgb: &[u8], dist_rgb: &[u8]) {
             .score
     });
 
+    // ── butteraugli-gpu (CubeCL, single-resolution) ──
     let device = <Backend as cubecl::Runtime>::Device::default();
     let client = <Backend as cubecl::Runtime>::client(&device);
     let mut gpu_cubecl = GpuButteraugli::<Backend>::new(client, w, h);
     let (cubecl_min, cubecl_med, cubecl_score) =
         bench(|| gpu_cubecl.compute(ref_rgb, dist_rgb).score as f64);
 
+    // ── butteraugli-cuda (PTX, multi-resolution) ──
+    let stream = CuStream::new().unwrap();
+    set_stream(stream.inner() as _).unwrap();
+    let mut gpu_ref = Image::<u8, C<3>>::malloc(w, h).unwrap();
+    let mut gpu_dis = gpu_ref.malloc_same_size().unwrap();
+    let mut gpu_cuda = butteraugli_cuda::Butteraugli::new(w, h).unwrap();
+    let (cuda_min, cuda_med, cuda_score) = bench(|| {
+        // Re-upload each iteration for a fair comparison with the GPU
+        // CubeCL implementation, which uploads on every `.compute()`.
+        gpu_ref.copy_from_cpu(ref_rgb, stream.inner() as _).unwrap();
+        gpu_dis
+            .copy_from_cpu(dist_rgb, stream.inner() as _)
+            .unwrap();
+        let s = gpu_cuda
+            .compute(gpu_ref.full_view(), gpu_dis.full_view())
+            .unwrap();
+        s as f64
+    });
+
     println!("\n=== {label} ({}×{} = {:.2} MP) ===", w, h, mp);
-    println!("                      median ms │  min ms │   MP/s │     score");
+    println!("                            median ms │  min ms │   MP/s │     score");
     println!(
-        " CPU multi-res         {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
+        " CPU multi-res               {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
         cpu_full_med,
         cpu_full_min,
         mp / (cpu_full_min / 1000.0),
         cpu_full_score
     );
     println!(
-        " CPU single-res        {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
+        " CPU single-res              {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
         cpu_single_med,
         cpu_single_min,
         mp / (cpu_single_min / 1000.0),
         cpu_single_score
     );
     println!(
-        " GPU CubeCL single-res {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
+        " butteraugli-cuda (PTX)      {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
+        cuda_med,
+        cuda_min,
+        mp / (cuda_min / 1000.0),
+        cuda_score
+    );
+    println!(
+        " butteraugli-gpu (CubeCL)    {:>7.2} │ {:>7.2} │ {:>6.1} │  {:>8.4}",
         cubecl_med,
         cubecl_min,
         mp / (cubecl_min / 1000.0),
         cubecl_score
     );
     println!(
-        " speedup vs CPU multi-res:   {:>5.1}× | vs CPU single-res:   {:>5.1}×",
-        cpu_full_min / cubecl_min,
-        cpu_single_min / cubecl_min
+        " speedup vs CPU multi-res:   PTX={:.1}× | CubeCL={:.1}×",
+        cpu_full_min / cuda_min,
+        cpu_full_min / cubecl_min
+    );
+    println!(
+        " PTX vs CubeCL ratio:        {:.2}×  (PTX/CubeCL)",
+        cuda_min / cubecl_min
     );
 }
 
 fn main() {
+    cudarse_driver::init_cuda_and_primary_ctx().expect("cuda init");
+
     let path_arg: Option<String> = env::args().nth(1);
     let (ref_rgb, dist_rgb, w, h) = load_or_synthetic(path_arg.as_deref());
-    println!("warm-up={WARM}, iters={ITERS}, hw=RTX 5070 + CUDA 13.2 (CubeCL backend)");
+    println!("warm-up={WARM}, iters={ITERS}, hw=RTX 5070 + CUDA 13.2");
     run_size("primary", w, h, &ref_rgb, &dist_rgb);
 
-    // Also exercise some smaller sizes from the same data, to show the
-    // per-call fixed-overhead vs per-pixel slope.
+    // Also exercise smaller sizes from the same data.
     let scaled_sizes: &[u32] = &[256, 512, 1024];
     for &s in scaled_sizes {
         if s >= w || s >= h {
             continue;
         }
-        // Simple decimate to s×s — rough but consistent across runs
         let mut r = vec![0_u8; (s * s * 3) as usize];
         let mut d = vec![0_u8; (s * s * 3) as usize];
         for y in 0..s as usize {
@@ -185,4 +211,6 @@ fn main() {
         }
         run_size(&format!("downsampled to {s}×{s}"), s, s, &r, &d);
     }
+
+    std::process::exit(0); // avoid CUDA cleanup crash
 }
