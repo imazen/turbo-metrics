@@ -186,7 +186,39 @@ impl<R: Runtime> ButteraugliBatch<R> {
         self.inner.set_reference(ref_srgb);
     }
 
+    /// Score N distorted variants against the cached reference.
+    /// Returns one max-norm per image. To also get the libjxl 3-norm,
+    /// use [`compute_batch_with_reference_full`].
     pub fn compute_batch_with_reference(&mut self, dist_batch: &[u8]) -> Vec<f32> {
+        self.run_batch_pipeline(dist_batch);
+        reduction::reduce_batched::<R>(
+            &self.client,
+            self.full.diffmap_batch.clone(),
+            (self.width * self.height) as u32,
+            self.batch_size as u32,
+        )
+    }
+
+    /// Same as [`compute_batch_with_reference`] but returns
+    /// `Vec<GpuButteraugliResult>` — `score` (max-norm) plus `pnorm_3`
+    /// (libjxl 3-norm aggregation) per image. The reduction kernel is
+    /// fused, so the extra sums are essentially free.
+    pub fn compute_batch_with_reference_full(
+        &mut self,
+        dist_batch: &[u8],
+    ) -> Vec<crate::GpuButteraugliResult> {
+        self.run_batch_pipeline(dist_batch);
+        reduction::reduce_batched_with_pnorm::<R>(
+            &self.client,
+            self.full.diffmap_batch.clone(),
+            (self.width * self.height) as u32,
+            self.batch_size as u32,
+        )
+    }
+
+    /// Internal: run everything from sRGB upload through the final
+    /// full-res diffmap_batch. Both reduction variants share this.
+    fn run_batch_pipeline(&mut self, dist_batch: &[u8]) {
         let n = self.batch_size;
         let bytes_per_image = (self.width * self.height * 3) as usize;
         assert_eq!(
@@ -195,34 +227,21 @@ impl<R: Runtime> ButteraugliBatch<R> {
             "batch length mismatch"
         );
         assert!(self.inner.has_cached_reference(), "set_reference first");
-
-        // Re-upload all N distorted images.
         self.full.src_u8_batch = self.client.create_from_slice(dist_batch);
 
-        // Phase 1: sRGB → linear in `lin_b_batch`. Stops before opsin
-        // because opsin overwrites lin_b_batch with XYB; we need the
-        // linear values for the half-res downsample.
+        // Phase 1: sRGB → linear; downsample linear before opsin
+        // overwrites lin_b_batch with XYB.
         self.full_srgb_to_linear();
         if self.half.is_some() {
             self.populate_half_linear_from_full();
         }
-
-        // Phase 2: opsin + frequency + diffs + diffmap (full-res).
+        // Phase 2: full-res pipeline.
         self.run_full_pipeline_from_linear();
-
-        // Phase 3: half-res from linear → half_diffmap, then supersample-add.
+        // Phase 3: half-res mix.
         if self.half.is_some() {
             self.run_half_distorted();
             self.add_supersampled_half_to_full();
         }
-
-        // Per-image max reduction.
-        reduction::reduce_batched::<R>(
-            &self.client,
-            self.full.diffmap_batch.clone(),
-            (self.width * self.height) as u32,
-            n as u32,
-        )
     }
 
     /// Just the sRGB → linear stage, populating `lin_b_batch`.

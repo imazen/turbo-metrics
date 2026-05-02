@@ -96,6 +96,14 @@ fn main() {
         }
         let single_ms = t.elapsed().as_secs_f64() * 1000.0;
 
+        // Reference: also collect single-image pnorm_3 for parity check.
+        let mut single_pnorms = Vec::with_capacity(n);
+        for i in 0..n {
+            let dist = &dist_batch[i * bytes_per..(i + 1) * bytes_per];
+            let r = bu_single.compute_with_reference(dist);
+            single_pnorms.push(r.pnorm_3);
+        }
+
         // Batched
         let mut bu_batch = ButteraugliBatch::<Backend>::new(client.clone(), w, h, n);
         bu_batch.set_reference(&ref_rgb);
@@ -104,6 +112,7 @@ fn main() {
         let t = Instant::now();
         let batched_scores = bu_batch.compute_batch_with_reference(&dist_batch);
         let batch_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let batched_full = bu_batch.compute_batch_with_reference_full(&dist_batch);
 
         println!("\n=== {}×{}, batch n={} ===", w, h, n);
         let mut max_rel = 0.0f64;
@@ -144,5 +153,21 @@ fn main() {
             "  speedup: {:.2}× per image",
             (single_ms / n as f64) / (batch_ms / n as f64)
         );
+
+        // pnorm_3 parity check
+        let mut max_pnorm_abs = 0.0f64;
+        for (i, (&single_p, full_r)) in single_pnorms.iter().zip(batched_full.iter()).enumerate() {
+            let abs = (single_p as f64 - full_r.pnorm_3 as f64).abs();
+            if abs > max_pnorm_abs {
+                max_pnorm_abs = abs;
+            }
+            if i < 3 {
+                println!(
+                    "  [{i}] pnorm_3 single={:.4}  batched={:.4}  Δ={:.2e}",
+                    single_p, full_r.pnorm_3, abs
+                );
+            }
+        }
+        println!("  max abs pnorm_3 diff = {:.4e}", max_pnorm_abs);
     }
 }

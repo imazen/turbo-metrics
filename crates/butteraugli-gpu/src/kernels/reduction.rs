@@ -196,3 +196,109 @@ pub fn reduce_batched<R: Runtime>(
         .map(|&b| f32::from_bits(b))
         .collect()
 }
+
+/// Per-image fused (max, Σd³, Σd⁶, Σd¹²) reduction over a batched
+/// diffmap. Each cube owns one image's plane (cube_pos_y = batch_idx)
+/// and reduces it grid-strided. Atomic outputs:
+///   `output_max_bits[i]`              — max per image (f32 bit pattern)
+///   `output_sums[i*3 + 0]`            — Σd³  per image
+///   `output_sums[i*3 + 1]`            — Σd⁶
+///   `output_sums[i*3 + 2]`            — Σd¹²
+///
+/// Caller must zero both buffers before launch.
+#[cube(launch_unchecked)]
+fn batched_max_pnorm_sums_kernel(
+    diffmap: &Array<f32>,
+    output_max_bits: &mut Array<Atomic<u32>>,
+    output_sums: &mut Array<Atomic<f32>>,
+    plane_stride: u32,
+) {
+    let batch_idx = CUBE_POS_Y;
+    let tid_in_plane = UNIT_POS_X + CUBE_POS_X * (CUBE_DIM_X as u32);
+    let stride_per_plane = CUBE_COUNT_X as u32 * (CUBE_DIM_X as u32);
+    let plane_off = (batch_idx * plane_stride) as usize;
+    let plane_us = plane_stride as usize;
+
+    let mut local_max = 0.0f32;
+    let mut local_p3 = 0.0f32;
+    let mut local_p6 = 0.0f32;
+    let mut local_p12 = 0.0f32;
+
+    let mut i = tid_in_plane as usize;
+    while i < plane_us {
+        let v = diffmap[plane_off + i];
+        if v > local_max {
+            local_max = v;
+        }
+        let d3 = v * v * v;
+        local_p3 += d3;
+        let d6 = d3 * d3;
+        local_p6 += d6;
+        local_p12 += d6 * d6;
+        i += stride_per_plane as usize;
+    }
+
+    let bits = u32::reinterpret(local_max);
+    output_max_bits[batch_idx as usize].fetch_max(bits);
+    let sum_off = (batch_idx * 3) as usize;
+    output_sums[sum_off].fetch_add(local_p3);
+    output_sums[sum_off + 1].fetch_add(local_p6);
+    output_sums[sum_off + 2].fetch_add(local_p12);
+}
+
+/// Batched reduction returning `(score, pnorm_3)` per image. Same launch
+/// geometry as [`reduce_batched`]; folds the four sums into the libjxl
+/// 3-norm aggregation host-side at f64 precision.
+pub fn reduce_batched_with_pnorm<R: Runtime>(
+    client: &ComputeClient<R>,
+    diffmap_handle: cubecl::server::Handle,
+    plane_stride: u32,
+    batch_size: u32,
+) -> Vec<crate::GpuButteraugliResult> {
+    let max_bits_handle =
+        client.create_from_slice(u32::as_bytes(&vec![0_u32; batch_size as usize]));
+    let sums_handle =
+        client.create_from_slice(f32::as_bytes(&vec![0.0_f32; (batch_size * 3) as usize]));
+    const CUBES_PER_IMAGE: u32 = 8;
+    const THREADS: u32 = 256;
+    let cube_count = CubeCount::Static(CUBES_PER_IMAGE, batch_size, 1);
+    let cube_dim = CubeDim::new_1d(THREADS);
+
+    unsafe {
+        batched_max_pnorm_sums_kernel::launch_unchecked::<R>(
+            client,
+            cube_count,
+            cube_dim,
+            ArrayArg::from_raw_parts(
+                diffmap_handle,
+                (plane_stride as usize) * (batch_size as usize),
+            ),
+            ArrayArg::from_raw_parts(max_bits_handle.clone(), batch_size as usize),
+            ArrayArg::from_raw_parts(sums_handle.clone(), (batch_size * 3) as usize),
+            plane_stride,
+        );
+    }
+
+    let max_bytes = client.read_one(max_bits_handle).expect("read batched max");
+    let sums_bytes = client.read_one(sums_handle).expect("read batched sums");
+    let max_bits = u32::from_bytes(&max_bytes);
+    let sums = f32::from_bytes(&sums_bytes);
+
+    let n_inv = 1.0_f64 / (plane_stride as f64);
+    (0..batch_size as usize)
+        .map(|i| {
+            let max = f32::from_bits(max_bits[i]);
+            let sum_p3 = sums[i * 3] as f64;
+            let sum_p6 = sums[i * 3 + 1] as f64;
+            let sum_p12 = sums[i * 3 + 2] as f64;
+            let v0 = (n_inv * sum_p3).powf(1.0 / 3.0);
+            let v1 = (n_inv * sum_p6).powf(1.0 / 6.0);
+            let v2 = (n_inv * sum_p12).powf(1.0 / 12.0);
+            let pnorm_3 = ((v0 + v1 + v2) / 3.0) as f32;
+            crate::GpuButteraugliResult {
+                score: max,
+                pnorm_3,
+            }
+        })
+        .collect()
+}
