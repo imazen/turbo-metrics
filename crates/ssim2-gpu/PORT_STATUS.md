@@ -61,6 +61,22 @@ single-image path doesn't pay. From N=2 onwards the launch-cost
 amortisation dominates. Target was 6× per the porting plan; we hit
 ~8× at the sweet spot.
 
+## Cross-vendor reality (verified 2026-05-02)
+
+| Backend | Atomic<f32>::fetch_add | Status | Path |
+|---|---|---|---|
+| CUDA (NVIDIA, native) | ✅ works | 21/21 tests pass | default `fast-reduction` |
+| Windows DX12 (NVIDIA RTX 5070, real driver) | ✅ works | 21/21 tests pass | default `fast-reduction` |
+| HIP (AMD ROCm) | likely ✅ | untested | should keep `fast-reduction` |
+| Metal (Apple Silicon + Intel Mac) | ❌ silently no-ops | needs portable path | `--no-default-features --features wgpu` |
+| Linux Vulkan via lavapipe (software) | unusable | adapter selection hangs > 6 min | not viable |
+| Windows DX12 via WARP (no GPU runner) | unusable | wgpu doesn't expose `force_fallback_adapter` | not viable on GH-hosted Windows |
+
+The runtime probe (`examples/print_capabilities.rs`) reports
+`Atomic<f32> = LoadStore|Add` on every backend that exposes the cubecl
+client at all — including Metal where it doesn't actually work. Don't
+trust the report; trust empirical test results.
+
 ## Toolchain reality
 
 - **CUDA 13.2** required for cubecl 0.10's CUDA backend (`/usr/local/cuda`

@@ -90,6 +90,33 @@ In-tree tests (`tests/parity_lock.rs`, all green):
 
 Plus 9 compile-only doctests on the public API (`cargo test --doc`).
 
+## Where it works (verified)
+
+| Backend | Status | Notes |
+|---|---|---|
+| CUDA (NVIDIA, native) | ✅ default | 21/21 tests, fast-reduction enabled |
+| Windows DX12 (NVIDIA RTX 5070+ real driver) | ✅ default | 21/21 tests, fast-reduction works |
+| Apple Silicon Metal | ✅ portable | Build with `--no-default-features --features wgpu` |
+| Intel Mac Metal | ✅ portable | Same |
+| HIP (AMD ROCm) | likely ✅ | Untested — same atomic intrinsics path as CUDA |
+| Linux Vulkan via lavapipe / WSL2 | ❌ not viable | adapter selection hangs > 6 min |
+| GH-hosted Windows DX12 | ❌ not viable | no GPU adapter, WARP not surfaced by cubecl-wgpu 0.10 |
+
+Per-image throughput at 256² (RTX 5070):
+
+| Backend | Mode | N=1 | N=8 | N=16 |
+|---|---|---|---|---|
+| CUDA | fast | 4.10 ms | — | — |
+| CUDA | fast (batched) | — | 2.08 ms | 1.68 ms |
+| DX12 (Windows native) | fast | 4.13 ms | — | — |
+| DX12 (Windows native, batched) | fast | — | 1.07 ms | 1.12 ms |
+| Metal (Apple Silicon CI) | portable | — | — | — |
+
+Note: DX12 batched at 1.07 ms/img beats CUDA in this configuration —
+CUDA's apparent regression vs the original 0.51 ms is from the u32
+sRGB widening (4× upload bandwidth) plus the copy-kernel finalizer;
+DX12 absorbs both better here.
+
 ## What's left
 
 ### 1. ~~Kernel-level `Ssim2Batch`~~ — **landed**

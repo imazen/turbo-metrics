@@ -16,14 +16,23 @@ cuda = ["cubecl/cuda"]
 wgpu = ["cubecl/wgpu"]
 hip = ["cubecl/hip"]
 cpu = ["cubecl/cpu"]
-# Use Atomic<f32>::fetch_add for the per-octave reduction. On CUDA
-# this drops single-image latency from ~5 ms to ~1 ms and the batched
-# per-image cost from ~1.3 ms to ~0.5 ms at 256². It does NOT work on
-# cubecl-wgpu's Metal backend — the runtime reports
-# `Atomic<f32> = LoadStore|Add` as supported, but the codegen silently
-# no-ops at execution time and the reductions return zero, collapsing
-# every score to ~100. Disable when targeting wgpu / Metal:
+# Use Atomic<f32>::fetch_add for the per-octave reduction. Verified
+# correct on:
+#   - CUDA   (NVIDIA, native runtime)
+#   - DX12   (Windows wgpu, real NVIDIA / AMD driver — including RTX 5070)
+#   - HIP    (AMD ROCm) — by analogy; uses CUDA-style atomic intrinsics
+# Verified BROKEN on:
+#   - Metal  (cubecl-wgpu's Metal backend reports Atomic<f32> = LoadStore|Add
+#            as supported, but the codegen silently no-ops at execution
+#            time — every reduction returns zero and every score
+#            collapses to ~100).
+#
+# Disable when targeting Metal:
 #   cargo build -p ssim2-gpu --no-default-features --features wgpu
+#
+# The default feature set leaves it on — that's correct for CUDA,
+# Windows DX12, and HIP. Mac / Metal users (or anyone unsure of their
+# wgpu sub-backend's float-atomic support) should disable it.
 fast-reduction = []
 
 [dependencies]
