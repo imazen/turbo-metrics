@@ -37,7 +37,11 @@ fn main() {
         srgb_bytes.push(v);
     }
 
-    let src_handle = client.create_from_slice(&srgb_bytes);
+    // Widen bytes to u32 for cross-vendor compatibility (wgpu/WGSL has
+    // no u8 storage type — Array<u8> reads zero on Metal). The kernel
+    // takes Array<u32>.
+    let src_widened: Vec<u32> = srgb_bytes.iter().map(|&b| b as u32).collect();
+    let src_handle = client.create_from_slice(u32::as_bytes(&src_widened));
     let dst_r = client.create_from_slice(f32::as_bytes(&vec![0.0_f32; n_pixels]));
     let dst_g = client.create_from_slice(f32::as_bytes(&vec![0.0_f32; n_pixels]));
     let dst_b = client.create_from_slice(f32::as_bytes(&vec![0.0_f32; n_pixels]));

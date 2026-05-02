@@ -209,8 +209,10 @@ impl<R: Runtime> Ssim2<R> {
             .collect::<Vec<_>>();
 
         let n_bytes = n * 3;
-        let src_u8_a = client.create_from_slice(&vec![0_u8; n_bytes]);
-        let src_u8_b = client.create_from_slice(&vec![0_u8; n_bytes]);
+        // sRGB bytes uploaded as u32 because wgpu's WGSL backend has
+        // no `u8` storage type (Array<u8> reads zero on Metal).
+        let src_u8_a = client.create_from_slice(u32::as_bytes(&vec![0_u32; n_bytes]));
+        let src_u8_b = client.create_from_slice(u32::as_bytes(&vec![0_u32; n_bytes]));
 
         let sums = client.create_from_slice(f32::as_bytes(&vec![0.0_f32; SUMS_LEN]));
 
@@ -428,10 +430,13 @@ impl<R: Runtime> Ssim2<R> {
 
     fn upload_and_srgb_to_linear(&mut self, is_a: bool, srgb: &[u8]) {
         let n_bytes = self.n * 3;
+        // Widen each sRGB byte to a u32 so wgpu/Metal can read it
+        // natively (WGSL has no u8 storage type).
+        let widened: Vec<u32> = srgb.iter().map(|&b| b as u32).collect();
         if is_a {
-            self.src_u8_a = self.client.create_from_slice(srgb);
+            self.src_u8_a = self.client.create_from_slice(u32::as_bytes(&widened));
         } else {
-            self.src_u8_b = self.client.create_from_slice(srgb);
+            self.src_u8_b = self.client.create_from_slice(u32::as_bytes(&widened));
         }
         let (src, lin) = if is_a {
             (&self.src_u8_a, &self.scales[0].ref_lin)

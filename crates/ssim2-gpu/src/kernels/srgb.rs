@@ -19,13 +19,18 @@ use cubecl::prelude::*;
 const SRGB_ALPHA: f32 = 1.055_010_7;
 const SRGB_BETA: f32 = 0.003_041_282_5;
 
-/// Per-pixel sRGB u8 (packed RGB) → planar linear f32 RGB.
+/// Per-pixel sRGB byte → planar linear f32 RGB.
 ///
-/// `src` holds `n_pixels × 3` bytes interleaved; `dst_r/g/b` each get
-/// `n_pixels` f32 in [0, 1].
+/// `src` holds `n_pixels × 3` byte values, each widened to `u32` on
+/// the host so wgpu's WGSL backend can read them as native scalars
+/// (WGSL has no `u8` storage type — `Array<u8>` reads zero on Metal).
+/// CUDA's u8 buffer path works either way; storing as u32 costs 4× the
+/// staging bandwidth (still trivial for typical SSIMULACRA2 inputs)
+/// in exchange for a kernel that runs identically on every cubecl
+/// backend. Output: `dst_r/g/b` each `n_pixels` f32 in [0, 1].
 #[cube(launch_unchecked)]
 pub fn srgb_u8_to_linear_planar_kernel(
-    src: &Array<u8>,
+    src: &Array<u32>,
     dst_r: &mut Array<f32>,
     dst_g: &mut Array<f32>,
     dst_b: &mut Array<f32>,
@@ -44,7 +49,7 @@ pub fn srgb_u8_to_linear_planar_kernel(
 /// sRGB transfer function with linear toe; gamma 2.4 (SSIMULACRA's
 /// "darker viewing" gamma).
 #[cube]
-fn srgb_byte_to_linear(v: u8) -> f32 {
+fn srgb_byte_to_linear(v: u32) -> f32 {
     let f = (v as f32) * (1.0 / 255.0);
     if f < 12.92 * SRGB_BETA {
         f / 12.92

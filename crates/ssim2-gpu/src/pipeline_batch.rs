@@ -162,7 +162,13 @@ impl<R: Runtime> Ssim2Batch<R> {
             .collect();
 
         let n_full = (width as usize) * (height as usize);
-        let src_u8_batch = client.create_from_slice(&vec![0_u8; n_full * 3 * (batch_size as usize)]);
+        // sRGB bytes are uploaded widened to u32 — wgpu's WGSL backend
+        // has no u8 storage type, so we keep all platforms on a u32
+        // path (CUDA happily handles either).
+        let src_u8_batch = client.create_from_slice(u32::as_bytes(&vec![
+            0_u32;
+            n_full * 3 * (batch_size as usize)
+        ]));
         let sums = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
             STATS_PER_IMAGE_FLOATS * (batch_size as usize)
@@ -263,9 +269,11 @@ impl<R: Runtime> Ssim2Batch<R> {
             packed.resize(total_bytes, 0);
         }
 
-        // Upload + sRGB → linear into bscales[0].dis_lin.
+        // Upload + sRGB → linear into bscales[0].dis_lin. Bytes are
+        // widened to u32 for cross-vendor (wgpu) compatibility.
         let client = self.inner.client().clone();
-        self.src_u8_batch = client.create_from_slice(&packed);
+        let widened: Vec<u32> = packed.iter().map(|&b| b as u32).collect();
+        self.src_u8_batch = client.create_from_slice(u32::as_bytes(&widened));
         let n_total_full = n_full * (self.batch_size as usize);
         unsafe {
             srgb::srgb_u8_to_linear_planar_kernel::launch_unchecked::<R>(
