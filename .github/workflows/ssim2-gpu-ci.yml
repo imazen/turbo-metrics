@@ -66,6 +66,9 @@ jobs:
       - name: Verify Metal availability
         run: system_profiler SPDisplaysDataType | head -40 || true
 
+      - name: Print cubecl capabilities (Metal)
+        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example print_capabilities
+
       # Run kernel-level parity *first* so a regression points at the
       # specific kernel. Keep all later steps gated on `if: always()`
       # so a single failure doesn't abort the rest — the goal in CI is
@@ -105,13 +108,21 @@ jobs:
   dx12-tests:
     name: Tests (DX12, windows-latest)
     runs-on: windows-latest
+    env:
+      # cubecl-wgpu defaults to Vulkan on non-macOS; force DX12 since
+      # Windows runners don't ship a Vulkan ICD.
+      AUTO_GRAPHICS_BACKEND: dx12
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ssim2-gpu-tests-windows
+      - name: Print cubecl capabilities (DX12)
+        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example print_capabilities
       - name: Doctests
+        if: always()
         run: cargo test -p ssim2-gpu --no-default-features --features wgpu --release --doc
       - name: Integration tests
+        if: always()
         run: cargo test -p ssim2-gpu --no-default-features --features wgpu --release --test parity_lock
