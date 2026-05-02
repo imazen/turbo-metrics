@@ -43,6 +43,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ssim2-gpu-${{ matrix.os }}
+          # The workspace target dir is multi-GB; on windows the tar
+          # post-step times out trying to save it. Skip target caching;
+          # registry / git caches still apply so dependency downloads
+          # don't repeat.
+          cache-targets: false
       - name: Build (no_default_features + wgpu)
         run: cargo build -p ssim2-gpu --no-default-features --features wgpu --release --all-targets
 
