@@ -153,18 +153,21 @@ pub struct Ssim2<R: Runtime> {
     /// Per-scale buffer sets.
     scales: Vec<Scale>,
 
-    /// Sums buffer for the host-side reduction. Layout:
-    ///   `[scale][channel][type][stat]` flattened.
-    /// Indices: `((scale*3 + channel)*3 + map_type)*2 + stat_kind`
+    /// Sums buffer holding per-block partials for the host-side
+    /// aggregation. Each (scale × channel × map_type) slot occupies
+    /// `NUM_BLOCKS · 2` floats: NUM_BLOCKS pairs of (block_sum,
+    /// block_p4) that the host reads back and folds into final
+    /// (Σ, Σ⁴) at f64 precision.
+    /// Slot index: `(scale * 3 + channel) * 3 + map_type`
     ///   - map_type: 0=ssim, 1=artifact, 2=detail
-    ///   - stat_kind: 0=Σ, 1=Σ⁴
-    /// Total length: NUM_SCALES * 3 * 3 * 2 = 108.
+    /// Total length: NUM_SCALES * 3 * 3 * NUM_BLOCKS * 2.
     sums: cubecl::server::Handle,
 
     has_cached_reference: bool,
 }
 
-const SUMS_LEN: usize = NUM_SCALES * 3 * 3 * 2;
+const NUM_SLOTS: usize = NUM_SCALES * 3 * 3; // 54
+const SUMS_LEN: usize = NUM_SLOTS * reduction::PARTIALS_PER_REDUCTION;
 
 impl<R: Runtime> Ssim2<R> {
     /// Allocate every per-instance buffer for the given image size.
@@ -745,18 +748,17 @@ impl<R: Runtime> Ssim2<R> {
     fn run_reductions(&self, scale: usize) {
         let s = &self.scales[scale];
         for ch in 0..3 {
-            // Layout: ((scale*3 + ch)*3 + map_type)*2 + stat_kind
-            let base = (scale * 3 + ch) * 3 * 2;
             let plane_handles = [&s.ssim[ch], &s.artifact[ch], &s.detail[ch]];
             for map_type in 0..3 {
-                let off = (base + map_type * 2) as u32;
+                // Slot encoding: (scale * 3 + ch) * 3 + map_type ∈ [0, 54).
+                let slot = ((scale * 3 + ch) * 3 + map_type) as u32;
                 reduction::launch_sum_p4::<R>(
                     &self.client,
                     plane_handles[map_type].clone(),
                     s.n,
                     self.sums.clone(),
                     SUMS_LEN,
-                    off,
+                    slot,
                 );
             }
         }
@@ -800,23 +802,34 @@ impl<R: Runtime> Ssim2<R> {
             .client
             .create_from_slice(f32::as_bytes(&vec![0.0_f32; SUMS_LEN]));
 
-        // Fold to f64, applying 1/N normalisation per (scale, channel).
-        // Layout of `raw` (length 108): for scale s, channel c, map_type m,
-        // stat k: index = (((s*3 + c)*3 + m)*2 + k).
+        // Sum the per-block partials at f64 precision, then apply the
+        // 1/N normalisation per (scale, channel). Layout of `raw`:
+        // for slot s ∈ [0, NUM_SLOTS), block b ∈ [0, NUM_BLOCKS),
+        // stat k ∈ {0=Σ, 1=Σ⁴}, index = (s * NUM_BLOCKS + b) * 2 + k.
         let mut avg_ssim = vec![[0.0_f64; 6]; NUM_SCALES]; // [scale][c*2 + n]
         let mut avg_edgediff = vec![[0.0_f64; 12]; NUM_SCALES]; // [scale][c*4 + n]
+
+        let fold_slot = |slot: usize| -> (f64, f64) {
+            let off = slot * reduction::PARTIALS_PER_REDUCTION;
+            let mut sum = 0.0_f64;
+            let mut p4 = 0.0_f64;
+            for k in 0..reduction::THREADS_PER_REDUCTION {
+                sum += raw[off + k * 2] as f64;
+                p4 += raw[off + k * 2 + 1] as f64;
+            }
+            (sum, p4)
+        };
 
         for scale in 0..self.scales.len() {
             let n_pix = self.scales[scale].n as f64;
             let one_per_pixels = 1.0 / n_pix;
             for ch in 0..3 {
-                let base = ((scale * 3 + ch) * 3) * 2;
-                let s_sum = raw[base] as f64;
-                let s_p4 = raw[base + 1] as f64;
-                let a_sum = raw[base + 2] as f64;
-                let a_p4 = raw[base + 3] as f64;
-                let d_sum = raw[base + 4] as f64;
-                let d_p4 = raw[base + 5] as f64;
+                let s_slot = (scale * 3 + ch) * 3; // ssim
+                let a_slot = s_slot + 1;           // artifact
+                let d_slot = s_slot + 2;           // detail
+                let (s_sum, s_p4) = fold_slot(s_slot);
+                let (a_sum, a_p4) = fold_slot(a_slot);
+                let (d_sum, d_p4) = fold_slot(d_slot);
 
                 avg_ssim[scale][ch * 2] = one_per_pixels * s_sum;
                 avg_ssim[scale][ch * 2 + 1] = (one_per_pixels * s_p4).sqrt().sqrt();

@@ -93,12 +93,12 @@ impl BatchScale {
     }
 }
 
-/// Per-image stats laid out flat. 6 scales × 3 channels × 3 map types
-/// × 2 stats = 108 f32 per image. Matches the layout `Ssim2`'s
-/// `read_and_aggregate` consumes (so the score-folding helper drops in
-/// per-image-by-per-image with no slice gymnastics).
+/// Per-image stats: 54 slots × NUM_BLOCKS partials × 2 stats. Same
+/// layout as the single-image `Ssim2`'s sums buffer, packed
+/// per-image. Host folds blocks per slot at f64 precision.
 const STATS_PER_IMAGE_SLOTS: u32 = (NUM_SCALES * 3 * 3) as u32; // 54
-const STATS_PER_IMAGE_FLOATS: usize = (STATS_PER_IMAGE_SLOTS as usize) * 2; // 108
+const STATS_PER_IMAGE_FLOATS: usize =
+    (STATS_PER_IMAGE_SLOTS as usize) * reduction::PARTIALS_PER_REDUCTION;
 
 /// Score N distorted images against a cached reference using batched
 /// kernel launches.
@@ -543,27 +543,32 @@ impl<R: Runtime> Ssim2Batch<R> {
         }
     }
 
-    /// Fold one image's 108-stat block into a final score. Mirrors
-    /// `Ssim2::read_and_aggregate`'s per-scale 1/N normalisation and
-    /// the published 108-weight WEIGHT table.
+    /// Fold one image's per-block partials block (54 slots × NUM_BLOCKS
+    /// pairs) into a final score. Mirrors `Ssim2::read_and_aggregate`.
     fn fold_score(&self, block: &[f32]) -> GpuSsim2Result {
         debug_assert_eq!(block.len(), STATS_PER_IMAGE_FLOATS);
         let mut avg_ssim = vec![[0.0_f64; 6]; NUM_SCALES];
         let mut avg_edgediff = vec![[0.0_f64; 12]; NUM_SCALES];
 
+        let fold_slot = |slot: usize| -> (f64, f64) {
+            let off = slot * reduction::PARTIALS_PER_REDUCTION;
+            let mut sum = 0.0_f64;
+            let mut p4 = 0.0_f64;
+            for k in 0..reduction::THREADS_PER_REDUCTION {
+                sum += block[off + k * 2] as f64;
+                p4 += block[off + k * 2 + 1] as f64;
+            }
+            (sum, p4)
+        };
+
         for s in 0..self.bscales.len() {
             let n_pix = self.bscales[s].n as f64;
             let one_per_pixels = 1.0 / n_pix;
             for ch in 0..3 {
-                // Slot indexing matches Ssim2::run_reductions:
-                //   off = scale*18 + ch*6 + map*2
-                let base = s * 18 + ch * 6;
-                let s_sum = block[base] as f64;
-                let s_p4 = block[base + 1] as f64;
-                let a_sum = block[base + 2] as f64;
-                let a_p4 = block[base + 3] as f64;
-                let d_sum = block[base + 4] as f64;
-                let d_p4 = block[base + 5] as f64;
+                let s_slot = (s * 3 + ch) * 3;
+                let (s_sum, s_p4) = fold_slot(s_slot);
+                let (a_sum, a_p4) = fold_slot(s_slot + 1);
+                let (d_sum, d_p4) = fold_slot(s_slot + 2);
 
                 avg_ssim[s][ch * 2] = one_per_pixels * s_sum;
                 avg_ssim[s][ch * 2 + 1] = (one_per_pixels * s_p4).sqrt().sqrt();

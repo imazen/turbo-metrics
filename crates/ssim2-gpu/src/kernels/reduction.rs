@@ -1,34 +1,52 @@
-//! Per-plane fused (Σd, Σd⁴) reduction.
+//! Per-plane (Σd, Σd⁴) reduction via per-thread partials + host-side
+//! aggregation.
 //!
 //! For each error-map plane the SSIMULACRA2 score wants two numbers:
 //! - mean: `(1/N) · Σ d`
 //! - p4 norm: `((1/N) · Σ d⁴)^(1/4)`
 //!
-//! See `ssimulacra2::ssim_map` (sum + sum-of-fourth-powers per plane,
-//! per channel). The CUDA reference splits this into two NPP `Sum`
-//! launches; here we fuse them into a single grid-strided kernel,
-//! matching butteraugli-gpu's reduction pattern.
+//! ## Why not `Atomic<f32>::fetch_add`?
 //!
-//! ## Atomics across backends
+//! CUDA exposes `atomicAdd(float*, float)` as a hardware primitive and
+//! cubecl-cuda lowers `Atomic<f32>::fetch_add` to it directly. cubecl-
+//! wgpu only registers the same op when the device exposes
+//! `SHADER_FLOAT32_ATOMIC` (Vulkan `VK_EXT_shader_atomic_float` /
+//! Metal 3.0+ atomic_float). The GitHub-hosted Metal runners don't
+//! enable it (or the codegen silently drops the op), and our
+//! reductions returned all zeros — every score collapsed to ~100.
 //!
-//! `Atomic<f32>::fetch_add` is supported on all CubeCL backends
-//! (CUDA/WGPU/Metal/HIP). f64 atomics are CUDA-only, so we accumulate
-//! in f32 and host-side fold to f64. Error-map values are in [0, 1] for
-//! the typical SSIMULACRA2 input ranges; at 33 MP the relative
-//! round-off in `Σ d⁴` stays below 1e-3, well below the 0.1 % score
-//! tolerance.
+//! Rather than depend on that, each grid-strided thread writes its
+//! own (sum, p4) partial to a per-thread output slot; the host sums
+//! `NUM_THREADS_TOTAL` partials per slot at f64 precision. Slightly
+//! more bandwidth than the atomic path (≈ 1.7 MB read per
+//! `compute()` instead of 432 B), but works on every cubecl backend
+//! without feature negotiation.
 
 use cubecl::prelude::*;
 
-/// Output convention: `output_sums[2*plane_idx]   = Σ d`
-///                    `output_sums[2*plane_idx+1] = Σ d⁴`
-///
-/// Caller zeroes the buffer; we fetch_add into both slots.
+/// Threads per cube. 256 keeps occupancy high without exceeding any
+/// backend's max workgroup size.
+pub const BLOCK_SIZE: u32 = 256;
+
+/// Cubes per reduction. 16 × 256 = 4096 grid-strided workers — same
+/// total worker count the atomic-based path used.
+pub const NUM_BLOCKS: u32 = 16;
+
+/// Total threads per reduction (= number of (sum, p4) partials a
+/// single reduction emits).
+pub const THREADS_PER_REDUCTION: usize = (NUM_BLOCKS * BLOCK_SIZE) as usize;
+
+/// Floats per reduction in the output buffer: each thread writes 2.
+pub const PARTIALS_PER_REDUCTION: usize = THREADS_PER_REDUCTION * 2;
+
+/// Per-thread (Σd, Σd⁴) emit. Each grid-strided thread emits its own
+/// partial; no atomics, no shared memory, no cross-thread sync. The
+/// host folds NUM_THREADS_TOTAL partials per slot.
 #[cube(launch_unchecked)]
-fn fused_sum_p4_kernel(
+fn thread_sum_p4_kernel(
     plane: &Array<f32>,
-    output_sums: &mut Array<Atomic<f32>>,
-    out_offset: u32,
+    output: &mut Array<f32>,
+    slot_offset: u32,
 ) {
     let tid = ABSOLUTE_POS;
     let stride = CUBE_COUNT * (CUBE_DIM_X as usize);
@@ -36,7 +54,6 @@ fn fused_sum_p4_kernel(
 
     let mut local_sum = 0.0_f32;
     let mut local_p4 = 0.0_f32;
-
     let mut i = tid;
     while i < n {
         let v = plane[i];
@@ -46,88 +63,76 @@ fn fused_sum_p4_kernel(
         i += stride;
     }
 
-    let off = out_offset as usize;
-    output_sums[off].fetch_add(local_sum);
-    output_sums[off + 1].fetch_add(local_p4);
+    let off = (slot_offset as usize) + tid * 2;
+    output[off] = local_sum;
+    output[off + 1] = local_p4;
 }
 
-/// Run the fused (Σ, Σ⁴) reduction for one plane. Caller manages
-/// `output_sums_handle` lifetime — typically allocated once per
-/// (scale × channel × error-map) and read back at the end.
-///
-/// `out_offset` indexes into a flat sums buffer that may hold many
-/// reductions packed together (so the host can issue one read at the
-/// end of the pipeline).
+/// Run the reduction for one plane. Caller passes the byte-offset
+/// (in floats) where this slot's `PARTIALS_PER_REDUCTION` floats live
+/// inside `output_sums_handle`.
 pub fn launch_sum_p4<R: Runtime>(
     client: &ComputeClient<R>,
     plane_handle: cubecl::server::Handle,
     n_pixels: usize,
     output_sums_handle: cubecl::server::Handle,
     output_sums_len: usize,
-    out_offset: u32,
+    slot: u32,
 ) {
-    const BLOCKS: u32 = 16;
-    const THREADS: u32 = 256;
-    let cube_count = CubeCount::Static(BLOCKS, 1, 1);
-    let cube_dim = CubeDim::new_1d(THREADS);
+    let cube_count = CubeCount::Static(NUM_BLOCKS, 1, 1);
+    let cube_dim = CubeDim::new_1d(BLOCK_SIZE);
+    let slot_offset = slot * (PARTIALS_PER_REDUCTION as u32);
 
     unsafe {
-        fused_sum_p4_kernel::launch_unchecked::<R>(
+        thread_sum_p4_kernel::launch_unchecked::<R>(
             client,
             cube_count,
             cube_dim,
             ArrayArg::from_raw_parts(plane_handle, n_pixels),
             ArrayArg::from_raw_parts(output_sums_handle, output_sums_len),
-            out_offset,
+            slot_offset,
         );
     }
 }
 
-/// Batched per-image reduction kernel.
-///
-/// Each cube grouping (`CUBE_POS_Y`) handles one image's plane in the
-/// batch and reduces it grid-strided over `CUBE_POS_X`. Output layout:
-///   `output_sums[2 * (batch_idx * stats_per_image + slot)]`     = Σ
-///   `output_sums[2 * (batch_idx * stats_per_image + slot) + 1]` = Σ⁴
-///
-/// Caller zeroes the output. `slot` selects which (channel × map_type)
-/// stat slot inside an image's stats block this reduction writes.
+/// Per-image reduction kernel — `CUBE_POS_Y` selects the image; each
+/// thread within (block, image) emits its own partial. Output region
+/// per (image, slot) is `PARTIALS_PER_REDUCTION` floats.
 #[cube(launch_unchecked)]
-fn fused_sum_p4_batched_kernel(
+fn thread_sum_p4_batched_kernel(
     plane: &Array<f32>,
-    output_sums: &mut Array<Atomic<f32>>,
+    output: &mut Array<f32>,
     plane_stride: u32,
-    stats_per_image: u32,
-    slot: u32,
+    image_stride: u32,
+    slot_offset: u32,
 ) {
-    let batch_idx = CUBE_POS_Y;
     let tid_in_plane = UNIT_POS_X + CUBE_POS_X * (CUBE_DIM_X as u32);
-    let stride_per_plane = CUBE_COUNT_X as u32 * (CUBE_DIM_X as u32);
-    let plane_off = (batch_idx * plane_stride) as usize;
+    let stride_per_image = CUBE_COUNT_X as u32 * (CUBE_DIM_X as u32);
+    let batch_idx = CUBE_POS_Y;
     let plane_us = plane_stride as usize;
+    let plane_off = (batch_idx * plane_stride) as usize;
+    let img_off = (batch_idx * image_stride + slot_offset) as usize;
 
     let mut local_sum = 0.0_f32;
     let mut local_p4 = 0.0_f32;
-
     let mut i = tid_in_plane as usize;
     while i < plane_us {
         let v = plane[plane_off + i];
         local_sum += v;
         let v2 = v * v;
         local_p4 += v2 * v2;
-        i += stride_per_plane as usize;
+        i += stride_per_image as usize;
     }
 
-    let off = ((batch_idx * stats_per_image + slot) * 2) as usize;
-    output_sums[off].fetch_add(local_sum);
-    output_sums[off + 1].fetch_add(local_p4);
+    let out_idx = img_off + (tid_in_plane as usize) * 2;
+    output[out_idx] = local_sum;
+    output[out_idx + 1] = local_p4;
 }
 
-/// Run the batched (Σ, Σ⁴) reduction for one (channel × error-map)
-/// across `batch_size` images. `output_sums_handle` covers the entire
-/// (NUM_SCALES × 3 channels × 3 map types × 2 stats × batch_size)
-/// flat sums region; `slot` selects which (scale × channel × map_type)
-/// triple inside the per-image stats block this reduction writes.
+/// Run the batched reduction. `image_stride` is the per-image stride
+/// in the output buffer (= `num_slots × PARTIALS_PER_REDUCTION`),
+/// `slot_offset` selects which slot (in floats) inside the image's
+/// stats region this reduction writes to.
 pub fn launch_sum_p4_batched<R: Runtime>(
     client: &ComputeClient<R>,
     plane_handle: cubecl::server::Handle,
@@ -135,16 +140,16 @@ pub fn launch_sum_p4_batched<R: Runtime>(
     batch_size: u32,
     output_sums_handle: cubecl::server::Handle,
     output_sums_len: usize,
-    stats_per_image: u32,
+    num_slots: u32,
     slot: u32,
 ) {
-    const CUBES_PER_IMAGE: u32 = 8;
-    const THREADS: u32 = 256;
-    let cube_count = CubeCount::Static(CUBES_PER_IMAGE, batch_size, 1);
-    let cube_dim = CubeDim::new_1d(THREADS);
+    let cube_count = CubeCount::Static(NUM_BLOCKS, batch_size, 1);
+    let cube_dim = CubeDim::new_1d(BLOCK_SIZE);
+    let image_stride = num_slots * (PARTIALS_PER_REDUCTION as u32);
+    let slot_offset = slot * (PARTIALS_PER_REDUCTION as u32);
 
     unsafe {
-        fused_sum_p4_batched_kernel::launch_unchecked::<R>(
+        thread_sum_p4_batched_kernel::launch_unchecked::<R>(
             client,
             cube_count,
             cube_dim,
@@ -154,8 +159,8 @@ pub fn launch_sum_p4_batched<R: Runtime>(
             ),
             ArrayArg::from_raw_parts(output_sums_handle, output_sums_len),
             plane_stride,
-            stats_per_image,
-            slot,
+            image_stride,
+            slot_offset,
         );
     }
 }
