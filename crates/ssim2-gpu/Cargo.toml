@@ -11,11 +11,20 @@ rust-version = "1.92"
 publish = false
 
 [features]
-default = ["cuda", "wgpu", "cpu"]
+default = ["cuda", "wgpu", "cpu", "fast-reduction"]
 cuda = ["cubecl/cuda"]
 wgpu = ["cubecl/wgpu"]
 hip = ["cubecl/hip"]
 cpu = ["cubecl/cpu"]
+# Use Atomic<f32>::fetch_add for the per-octave reduction. On CUDA
+# this drops single-image latency from ~5 ms to ~1 ms and the batched
+# per-image cost from ~1.3 ms to ~0.5 ms at 256². It does NOT work on
+# cubecl-wgpu's Metal backend — the runtime reports
+# `Atomic<f32> = LoadStore|Add` as supported, but the codegen silently
+# no-ops at execution time and the reductions return zero, collapsing
+# every score to ~100. Disable when targeting wgpu / Metal:
+#   cargo build -p ssim2-gpu --no-default-features --features wgpu
+fast-reduction = []
 
 [dependencies]
 cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std"] }

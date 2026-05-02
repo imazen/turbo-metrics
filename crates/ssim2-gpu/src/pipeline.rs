@@ -153,21 +153,23 @@ pub struct Ssim2<R: Runtime> {
     /// Per-scale buffer sets.
     scales: Vec<Scale>,
 
-    /// Sums buffer holding per-block partials for the host-side
-    /// aggregation. Each (scale × channel × map_type) slot occupies
-    /// `NUM_BLOCKS · 2` floats: NUM_BLOCKS pairs of (block_sum,
-    /// block_p4) that the host reads back and folds into final
-    /// (Σ, Σ⁴) at f64 precision.
+    /// Per-thread partials scratch — `NUM_SLOTS * PARTIALS_PER_REDUCTION`
+    /// floats. Used in stage 1 of the two-stage reduction. Never read
+    /// by the host; only the much smaller `sums` buffer crosses the
+    /// device→host boundary.
+    partials: cubecl::server::Handle,
+    /// Final (Σ, Σ⁴) per slot — `NUM_SLOTS * 2` floats. Populated by
+    /// the finalizer kernel and read once per `compute()`.
     /// Slot index: `(scale * 3 + channel) * 3 + map_type`
     ///   - map_type: 0=ssim, 1=artifact, 2=detail
-    /// Total length: NUM_SCALES * 3 * 3 * NUM_BLOCKS * 2.
     sums: cubecl::server::Handle,
 
     has_cached_reference: bool,
 }
 
 const NUM_SLOTS: usize = NUM_SCALES * 3 * 3; // 54
-const SUMS_LEN: usize = NUM_SLOTS * reduction::PARTIALS_PER_REDUCTION;
+const PARTIALS_LEN: usize = NUM_SLOTS * reduction::PARTIALS_PER_REDUCTION;
+const SUMS_LEN: usize = NUM_SLOTS * 2;
 
 impl<R: Runtime> Ssim2<R> {
     /// Allocate every per-instance buffer for the given image size.
@@ -214,6 +216,7 @@ impl<R: Runtime> Ssim2<R> {
         let src_u8_a = client.create_from_slice(u32::as_bytes(&vec![0_u32; n_bytes]));
         let src_u8_b = client.create_from_slice(u32::as_bytes(&vec![0_u32; n_bytes]));
 
+        let partials = client.create_from_slice(f32::as_bytes(&vec![0.0_f32; PARTIALS_LEN]));
         let sums = client.create_from_slice(f32::as_bytes(&vec![0.0_f32; SUMS_LEN]));
 
         Ok(Self {
@@ -224,6 +227,7 @@ impl<R: Runtime> Ssim2<R> {
             src_u8_a,
             src_u8_b,
             scales,
+            partials,
             sums,
             has_cached_reference: false,
         })
@@ -301,10 +305,12 @@ impl<R: Runtime> Ssim2<R> {
         self.build_linear_pyramid(true);
         self.build_linear_pyramid(false);
 
-        // Per-scale processing.
+        // Per-scale processing — populates per-thread partials.
         for s in 0..self.scales.len() {
             self.process_scale(s, true, true);
         }
+        // Stage-2 finalizer folds partials → small (slot, sum, p4) buffer.
+        self.run_finalizer();
 
         Ok(GpuSsim2Result {
             score: self.read_and_aggregate(),
@@ -392,6 +398,7 @@ impl<R: Runtime> Ssim2<R> {
             self.run_error_maps(s);
             self.run_reductions(s);
         }
+        self.run_finalizer();
 
         Ok(GpuSsim2Result {
             score: self.read_and_aggregate(),
@@ -761,12 +768,27 @@ impl<R: Runtime> Ssim2<R> {
                     &self.client,
                     plane_handles[map_type].clone(),
                     s.n,
-                    self.sums.clone(),
-                    SUMS_LEN,
+                    self.partials.clone(),
+                    PARTIALS_LEN,
                     slot,
                 );
             }
         }
+    }
+
+    /// Stage-2 finalizer: fold per-thread partials into a small
+    /// `(slot, sum, p4)` buffer the host reads back. One launch per
+    /// `compute()` instead of 16× the readback the partials buffer would
+    /// require if the host folded directly.
+    fn run_finalizer(&self) {
+        reduction::launch_finalize::<R>(
+            &self.client,
+            self.partials.clone(),
+            PARTIALS_LEN,
+            self.sums.clone(),
+            SUMS_LEN,
+            NUM_SLOTS as u32,
+        );
     }
 
     /// Per-scale processing for `compute()`: XYB, products, blurs,
@@ -802,27 +824,28 @@ impl<R: Runtime> Ssim2<R> {
         let raw = f32::from_bytes(&bytes);
         debug_assert_eq!(raw.len(), SUMS_LEN);
 
-        // Reset the sums buffer for the next call.
+        // Reset both buffers for the next call. In fast mode the
+        // partials buffer is the atomic-add target so accumulators
+        // need zeroing; in portable mode each thread writes its slot
+        // unconditionally so partials reset is technically optional
+        // but cheap.
+        self.partials = self
+            .client
+            .create_from_slice(f32::as_bytes(&vec![0.0_f32; PARTIALS_LEN]));
         self.sums = self
             .client
             .create_from_slice(f32::as_bytes(&vec![0.0_f32; SUMS_LEN]));
 
-        // Sum the per-block partials at f64 precision, then apply the
-        // 1/N normalisation per (scale, channel). Layout of `raw`:
-        // for slot s ∈ [0, NUM_SLOTS), block b ∈ [0, NUM_BLOCKS),
-        // stat k ∈ {0=Σ, 1=Σ⁴}, index = (s * NUM_BLOCKS + b) * 2 + k.
+        // Layout post-finalizer: `raw[slot * 2]` = Σ, `raw[slot * 2 + 1]` = Σ⁴.
+        // Total length = NUM_SLOTS * 2 = 108 floats. The 4096 per-thread
+        // partials per slot were already folded on-device by the
+        // finalizer kernel — much less device→host bandwidth than reading
+        // the full partials buffer.
         let mut avg_ssim = vec![[0.0_f64; 6]; NUM_SCALES]; // [scale][c*2 + n]
         let mut avg_edgediff = vec![[0.0_f64; 12]; NUM_SCALES]; // [scale][c*4 + n]
 
         let fold_slot = |slot: usize| -> (f64, f64) {
-            let off = slot * reduction::PARTIALS_PER_REDUCTION;
-            let mut sum = 0.0_f64;
-            let mut p4 = 0.0_f64;
-            for k in 0..reduction::THREADS_PER_REDUCTION {
-                sum += raw[off + k * 2] as f64;
-                p4 += raw[off + k * 2 + 1] as f64;
-            }
-            (sum, p4)
+            (raw[slot * 2] as f64, raw[slot * 2 + 1] as f64)
         };
 
         for scale in 0..self.scales.len() {

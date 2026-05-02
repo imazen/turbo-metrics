@@ -93,11 +93,12 @@ impl BatchScale {
     }
 }
 
-/// Per-image stats: 54 slots × NUM_BLOCKS partials × 2 stats. Same
-/// layout as the single-image `Ssim2`'s sums buffer, packed
-/// per-image. Host folds blocks per slot at f64 precision.
+/// Per-image partials region (stage-1 scratch): 54 slots × per-thread
+/// partials. The host never reads this — the on-device finalizer folds
+/// it into `STATS_PER_IMAGE_FLOATS` floats per image.
 const STATS_PER_IMAGE_SLOTS: u32 = (NUM_SCALES * 3 * 3) as u32; // 54
-const STATS_PER_IMAGE_FLOATS: usize =
+const STATS_PER_IMAGE_FLOATS: usize = (STATS_PER_IMAGE_SLOTS as usize) * 2;
+const PARTIALS_PER_IMAGE_FLOATS: usize =
     (STATS_PER_IMAGE_SLOTS as usize) * reduction::PARTIALS_PER_REDUCTION;
 
 /// Score N distorted images against a cached reference using batched
@@ -122,7 +123,10 @@ pub struct Ssim2Batch<R: Runtime> {
     /// bytes, image-1 bytes, … image-{N-1} bytes — each `n_pixels × 3`
     /// bytes). Re-uploaded per `compute_batch`.
     src_u8_batch: cubecl::server::Handle,
-    /// Per-image flat sums: `batch_size × 108` floats.
+    /// Stage-1 partials scratch — never read by the host.
+    /// `batch_size × num_slots × PARTIALS_PER_REDUCTION` floats.
+    partials: cubecl::server::Handle,
+    /// Stage-2 finalized sums: `batch_size × 108` floats.
     sums: cubecl::server::Handle,
 }
 
@@ -169,6 +173,10 @@ impl<R: Runtime> Ssim2Batch<R> {
             0_u32;
             n_full * 3 * (batch_size as usize)
         ]));
+        let partials = client.create_from_slice(f32::as_bytes(&vec![
+            0.0_f32;
+            PARTIALS_PER_IMAGE_FLOATS * (batch_size as usize)
+        ]));
         let sums = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
             STATS_PER_IMAGE_FLOATS * (batch_size as usize)
@@ -179,6 +187,7 @@ impl<R: Runtime> Ssim2Batch<R> {
             batch_size,
             bscales,
             src_u8_batch,
+            partials,
             sums,
         })
     }
@@ -327,6 +336,17 @@ impl<R: Runtime> Ssim2Batch<R> {
         for s in 0..self.bscales.len() {
             self.process_scale_batched(s);
         }
+        // Stage-2 finalizer folds the per-thread partials region into a
+        // small per-image stats block that the host reads back.
+        reduction::launch_finalize_batched::<R>(
+            &client,
+            self.partials.clone(),
+            PARTIALS_PER_IMAGE_FLOATS * (self.batch_size as usize),
+            self.sums.clone(),
+            STATS_PER_IMAGE_FLOATS * (self.batch_size as usize),
+            self.batch_size,
+            STATS_PER_IMAGE_SLOTS,
+        );
 
         // Read sums and compute per-image scores.
         let bytes = client
@@ -335,7 +355,13 @@ impl<R: Runtime> Ssim2Batch<R> {
         let raw = f32::from_bytes(&bytes);
         debug_assert_eq!(raw.len(), STATS_PER_IMAGE_FLOATS * (self.batch_size as usize));
 
-        // Reset sums for next call.
+        // Reset both buffers for the next call. partials is the
+        // atomic-add target in fast mode (needs zeroing); sums is the
+        // finalizer's output (overwritten anyway, reset for safety).
+        self.partials = client.create_from_slice(f32::as_bytes(&vec![
+            0.0_f32;
+            PARTIALS_PER_IMAGE_FLOATS * (self.batch_size as usize)
+        ]));
         self.sums = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
             STATS_PER_IMAGE_FLOATS * (self.batch_size as usize)
@@ -488,8 +514,8 @@ impl<R: Runtime> Ssim2Batch<R> {
                     plane_handles[map_type].clone(),
                     plane_stride,
                     self.batch_size,
-                    self.sums.clone(),
-                    STATS_PER_IMAGE_FLOATS * (self.batch_size as usize),
+                    self.partials.clone(),
+                    PARTIALS_PER_IMAGE_FLOATS * (self.batch_size as usize),
                     STATS_PER_IMAGE_SLOTS,
                     slot,
                 );
@@ -551,22 +577,16 @@ impl<R: Runtime> Ssim2Batch<R> {
         }
     }
 
-    /// Fold one image's per-block partials block (54 slots × NUM_BLOCKS
-    /// pairs) into a final score. Mirrors `Ssim2::read_and_aggregate`.
+    /// Fold one image's finalized stats block into a final score.
+    /// `block` is `STATS_PER_IMAGE_FLOATS` long: 54 slots × 2 stats
+    /// (already aggregated by the on-device finalizer kernel).
     fn fold_score(&self, block: &[f32]) -> GpuSsim2Result {
         debug_assert_eq!(block.len(), STATS_PER_IMAGE_FLOATS);
         let mut avg_ssim = vec![[0.0_f64; 6]; NUM_SCALES];
         let mut avg_edgediff = vec![[0.0_f64; 12]; NUM_SCALES];
 
         let fold_slot = |slot: usize| -> (f64, f64) {
-            let off = slot * reduction::PARTIALS_PER_REDUCTION;
-            let mut sum = 0.0_f64;
-            let mut p4 = 0.0_f64;
-            for k in 0..reduction::THREADS_PER_REDUCTION {
-                sum += block[off + k * 2] as f64;
-                p4 += block[off + k * 2 + 1] as f64;
-            }
-            (sum, p4)
+            (block[slot * 2] as f64, block[slot * 2 + 1] as f64)
         };
 
         for s in 0..self.bscales.len() {
