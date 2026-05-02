@@ -21,7 +21,7 @@ nvptx-builder = { workspace = true }
 [dev-dependencies]
 zune-image = { workspace = true, features = ["png", "jpeg", "simd", "metadata"] }
 zune-core = { workspace = true }
-butteraugli = { path = "../../../butteraugli/butteraugli", features = ["internals"] }
+butteraugli = { version = "0.9.2", features = ["internals"] }
 imgref = "1.9"
 rgb = "0.8"
 sha2 = "0.10"
