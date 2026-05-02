@@ -14,8 +14,8 @@
 
 use cubecl::prelude::*;
 
-use crate::Butteraugli;
 use crate::kernels::{blur, colors, diffmap, downscale, frequency, malta, masking, reduction};
+use crate::{Butteraugli, ButteraugliParams, Result};
 
 const SIGMA_LF: f32 = 7.155_933_4;
 const SIGMA_OPSIN: f32 = 1.2;
@@ -26,7 +26,7 @@ const ADD_MF_RANGE: f32 = 0.1;
 const REMOVE_HF_RANGE: f32 = 1.5;
 const REMOVE_UHF_RANGE: f32 = 0.04;
 const SUPPRESS_XY: f32 = 46.0;
-const HF_ASYMMETRY: f32 = 1.0;
+// (Default HF asymmetry = 1.0; runtime-overridable via ButteraugliParams on the inner Butteraugli.)
 const W_MF_MALTA: f64 = 37.081_987_039_9;
 const NORM1_MF: f64 = 130_262_059.556;
 const W_MF_MALTA_X: f64 = 8_246.753_213_53;
@@ -51,7 +51,7 @@ const WMUL: [f64; 9] = [
     0.703_646_627_719,
 ];
 const MASK_RADIUS: f32 = 2.7;
-const DEFAULT_INTENSITY_MULTIPLIER: f32 = 80.0;
+// (Default intensity_target = 80.0 — read at runtime from inner.params().)
 const MIN_SIZE_FOR_SUBSAMPLE: u32 = 16;
 
 fn malta_norm(w_0gt1: f64, w_0lt1: f64, norm1: f64, use_lf: bool) -> (f32, f32, f32) {
@@ -186,6 +186,31 @@ impl<R: Runtime> ButteraugliBatch<R> {
         self.inner.set_reference(ref_srgb);
     }
 
+    /// Cache the reference image with custom [`ButteraugliParams`].
+    pub fn set_reference_with_options(
+        &mut self,
+        ref_srgb: &[u8],
+        params: &ButteraugliParams,
+    ) -> Result<()> {
+        self.inner.set_reference_with_options(ref_srgb, params)
+    }
+
+    /// Drop the cached reference state.
+    pub fn clear_reference(&mut self) {
+        self.inner.clear_reference();
+    }
+
+    /// Whether the reference cache is populated.
+    pub fn has_reference(&self) -> bool {
+        self.inner.has_cached_reference()
+    }
+
+    /// Active comparison params (last set via
+    /// [`set_reference_with_options`]).
+    pub fn params(&self) -> &ButteraugliParams {
+        self.inner.params()
+    }
+
     /// Score N distorted variants against the cached reference.
     /// Returns one max-norm per image. To also get the libjxl 3-norm,
     /// use [`compute_batch_with_reference_full`].
@@ -301,7 +326,7 @@ impl<R: Runtime> ButteraugliBatch<R> {
                 ArrayArg::from_raw_parts(buf.blur_b_batch[0].clone(), total),
                 ArrayArg::from_raw_parts(buf.blur_b_batch[1].clone(), total),
                 ArrayArg::from_raw_parts(buf.blur_b_batch[2].clone(), total),
-                DEFAULT_INTENSITY_MULTIPLIER,
+                self.inner.params().intensity_target,
             );
         }
 
@@ -352,7 +377,7 @@ impl<R: Runtime> ButteraugliBatch<R> {
                 ArrayArg::from_raw_parts(half.blur_b_batch[0].clone(), total),
                 ArrayArg::from_raw_parts(half.blur_b_batch[1].clone(), total),
                 ArrayArg::from_raw_parts(half.blur_b_batch[2].clone(), total),
-                DEFAULT_INTENSITY_MULTIPLIER,
+                self.inner.params().intensity_target,
             );
         }
         self.batched_separate_frequencies(half, plane);
@@ -641,7 +666,8 @@ impl<R: Runtime> ButteraugliBatch<R> {
 
     fn batched_psycho_diff(&self, buf: &BatchBuffers<R>, plane: u32, is_full: bool) {
         let n = self.batch_size as u32;
-        let asym = HF_ASYMMETRY as f64;
+        let p = self.inner.params();
+        let asym = p.hf_asymmetry as f64;
         let sqrt_asym = asym.sqrt();
         let cached_inner = if is_full {
             &self.inner
@@ -739,8 +765,8 @@ impl<R: Runtime> ButteraugliBatch<R> {
                 ArrayArg::from_raw_parts(buf.freq_b_batch[1][0].clone(), total),
                 ArrayArg::from_raw_parts(buf.block_diff_ac_batch[0].clone(), total),
                 plane,
-                (WMUL[0] as f32) * HF_ASYMMETRY,
-                (WMUL[0] as f32) / HF_ASYMMETRY,
+                (WMUL[0] as f32) * p.hf_asymmetry,
+                (WMUL[0] as f32) / p.hf_asymmetry,
             );
             // l2_asym HF Y (WMUL[1]) → ac[1]
             diffmap::l2_asym_diff_broadcast_batched_kernel::launch_unchecked::<R>(
@@ -751,8 +777,8 @@ impl<R: Runtime> ButteraugliBatch<R> {
                 ArrayArg::from_raw_parts(buf.freq_b_batch[1][1].clone(), total),
                 ArrayArg::from_raw_parts(buf.block_diff_ac_batch[1].clone(), total),
                 plane,
-                (WMUL[1] as f32) * HF_ASYMMETRY,
-                (WMUL[1] as f32) / HF_ASYMMETRY,
+                (WMUL[1] as f32) * p.hf_asymmetry,
+                (WMUL[1] as f32) / p.hf_asymmetry,
             );
             // l2 MF X (WMUL[3]) → ac[0]
             diffmap::l2_diff_broadcast_batched_kernel::launch_unchecked::<R>(
@@ -905,6 +931,7 @@ impl<R: Runtime> ButteraugliBatch<R> {
                 ArrayArg::from_raw_parts(buf.block_diff_ac_batch[1].clone(), total),
                 ArrayArg::from_raw_parts(buf.block_diff_ac_batch[2].clone(), total),
                 ArrayArg::from_raw_parts(buf.diffmap_batch.clone(), total),
+                self.inner.params().xmul,
             );
         }
     }

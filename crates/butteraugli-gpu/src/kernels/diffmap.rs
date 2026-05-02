@@ -30,6 +30,9 @@ fn mask_dc_y(delta: f32) -> f32 {
 }
 
 /// `dst = sqrt(maskY · ΣAC + maskDcY · ΣDC)` — the per-pixel butteraugli diffmap.
+/// The X (chroma) channel contributions are pre-scaled by `xmul`
+/// (default 1.0; set to 0.5 to halve chroma penalty etc.) — matches
+/// CPU butteraugli's `combine_channels_to_diffmap_fused`.
 #[cube(launch_unchecked)]
 pub fn compute_diffmap_kernel(
     mask: &Array<f32>,
@@ -40,6 +43,7 @@ pub fn compute_diffmap_kernel(
     block_diff_ac1: &Array<f32>,
     block_diff_ac2: &Array<f32>,
     dst: &mut Array<f32>,
+    xmul: f32,
 ) {
     let idx = ABSOLUTE_POS;
     if idx >= dst.len() {
@@ -48,8 +52,8 @@ pub fn compute_diffmap_kernel(
     let m = mask[idx];
     let mac = mask_y(m);
     let mdc = mask_dc_y(m);
-    let ac = block_diff_ac0[idx] + block_diff_ac1[idx] + block_diff_ac2[idx];
-    let dc = block_diff_dc0[idx] + block_diff_dc1[idx] + block_diff_dc2[idx];
+    let ac = block_diff_ac0[idx] * xmul + block_diff_ac1[idx] + block_diff_ac2[idx];
+    let dc = block_diff_dc0[idx] * xmul + block_diff_dc1[idx] + block_diff_dc2[idx];
     dst[idx] = f32::sqrt(mac * ac + mdc * dc);
 }
 

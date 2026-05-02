@@ -18,15 +18,19 @@
 
 use cubecl::prelude::*;
 
-use crate::GpuButteraugliResult;
 use crate::kernels::{blur, colors, diffmap, downscale, frequency, malta, masking, reduction};
+use crate::{ButteraugliParams, Error, GpuButteraugliResult, Result};
 
 /// Default intensity multiplier — value of one display nit relative to
 /// linear-light input scale. CPU butteraugli passes `80.0` for the
 /// standard 80-nit display directly to `opsin_dynamics_image`. Linear
 /// inputs already live on [0, 1] (after sRGB transfer); they get scaled
-/// to [0, 80] inside opsin, *not* divided by 255 again.
+/// to [0, 80] inside opsin, *not* divided by 255 again. Public so a
+/// caller can build a [`ButteraugliParams`] referring to the SDR
+/// default.
 pub const DEFAULT_INTENSITY_MULTIPLIER: f32 = 80.0;
+#[allow(dead_code)]
+const _: f32 = DEFAULT_INTENSITY_MULTIPLIER; // silence unused-const warning post-refactor
 
 // ═══ frequency separation ═══
 const SIGMA_LF: f32 = 7.155_933_4;
@@ -46,8 +50,7 @@ const REMOVE_HF_RANGE: f32 = 1.5;
 const REMOVE_UHF_RANGE: f32 = 0.04;
 const SUPPRESS_XY: f32 = 46.0;
 
-// ═══ asymmetry ═══
-const HF_ASYMMETRY: f32 = 1.0;
+// (Default HF asymmetry = 1.0 — runtime-overridable via ButteraugliParams.)
 
 // ═══ Malta band parameters (libjxl/butteraugli) ═══
 const W_MF_MALTA: f64 = 37.081_987_039_9;
@@ -151,10 +154,31 @@ pub struct Butteraugli<R: Runtime> {
     /// intermediates (lin_a XYB, freq_a[*][*], cached_blurred_a, mask)
     /// are valid and `compute_with_reference` may skip recomputing them.
     has_cached_reference: bool,
+
+    /// Active comparison parameters. Overwritten by
+    /// `compute_with_options` and `set_reference_with_options`; the
+    /// non-`_with_options` entry points use [`ButteraugliParams::default`].
+    /// Stored on the struct so internal helpers can read it without
+    /// threading the value through every call.
+    params: ButteraugliParams,
 }
 
 fn alloc_plane<R: Runtime>(client: &ComputeClient<R>, n: usize) -> cubecl::server::Handle {
     client.create_from_slice(f32::as_bytes(&vec![0.0_f32; n]))
+}
+
+/// Reject NaN, +Inf, and non-positive intensity_target.
+pub(crate) fn validate_params(params: &ButteraugliParams) -> Result<()> {
+    if !params.intensity_target.is_finite() || params.intensity_target <= 0.0 {
+        return Err(Error::InvalidParams("intensity_target must be > 0"));
+    }
+    if !params.hf_asymmetry.is_finite() || params.hf_asymmetry <= 0.0 {
+        return Err(Error::InvalidParams("hf_asymmetry must be > 0"));
+    }
+    if !params.xmul.is_finite() || params.xmul < 0.0 {
+        return Err(Error::InvalidParams("xmul must be >= 0"));
+    }
+    Ok(())
 }
 
 /// Downsample 2× the linear-RGB planes from `full` into the matching
@@ -255,6 +279,7 @@ impl<R: Runtime> Butteraugli<R> {
             temp2,
             half_res: None,
             has_cached_reference: false,
+            params: ButteraugliParams::default(),
         }
     }
 
@@ -285,10 +310,31 @@ impl<R: Runtime> Butteraugli<R> {
     /// default mode). With [`Butteraugli::new`] the call is single-
     /// resolution only.
     pub fn compute(&mut self, ref_srgb: &[u8], dist_srgb: &[u8]) -> GpuButteraugliResult {
+        self.compute_with_options(ref_srgb, dist_srgb, &ButteraugliParams::default())
+            .expect("default params + matching dimensions never fail")
+    }
+
+    /// `compute` with runtime-tunable [`ButteraugliParams`] (HDR
+    /// intensity target, asymmetric weights, chroma multiplier).
+    /// Returns `Err` on dimension mismatch or invalid params.
+    pub fn compute_with_options(
+        &mut self,
+        ref_srgb: &[u8],
+        dist_srgb: &[u8],
+        params: &ButteraugliParams,
+    ) -> Result<GpuButteraugliResult> {
+        validate_params(params)?;
+        self.check_dims(ref_srgb)?;
+        self.check_dims(dist_srgb)?;
+        self.set_params_recursive(params);
         self.populate_linear_from_srgb(true, ref_srgb);
         self.populate_linear_from_srgb(false, dist_srgb);
         self.run_pipeline_from_linear(true, true);
-        reduction::reduce::<R>(&self.client, self.diffmap_buf.clone(), self.n)
+        Ok(reduction::reduce::<R>(
+            &self.client,
+            self.diffmap_buf.clone(),
+            self.n,
+        ))
     }
 
     /// Cache the reference image's intermediate state. After this call,
@@ -297,9 +343,23 @@ impl<R: Runtime> Butteraugli<R> {
     /// reference-side ~half of the pipeline (sRGB→linear→opsin→
     /// frequency separation → reference mask blur).
     pub fn set_reference(&mut self, ref_srgb: &[u8]) {
+        self.set_reference_with_options(ref_srgb, &ButteraugliParams::default())
+            .expect("default params + matching dimensions never fail");
+    }
+
+    /// Cache the reference image with a specific [`ButteraugliParams`].
+    /// All subsequent [`compute_with_reference`] (or
+    /// [`compute_with_reference_with_options`]) calls reuse those params
+    /// — call again to change them.
+    pub fn set_reference_with_options(
+        &mut self,
+        ref_srgb: &[u8],
+        params: &ButteraugliParams,
+    ) -> Result<()> {
+        validate_params(params)?;
+        self.check_dims(ref_srgb)?;
+        self.set_params_recursive(params);
         self.populate_linear_from_srgb(true, ref_srgb);
-        // Downsample reference linear into the half-res sibling now,
-        // before opsin overwrites lin_a in place.
         if let Some(half) = self.half_res.as_deref() {
             populate_half_res_linear(self, half, true);
         }
@@ -313,6 +373,16 @@ impl<R: Runtime> Butteraugli<R> {
             half.compute_mask_pipeline_reference_only();
             half.has_cached_reference = true;
         }
+        Ok(())
+    }
+
+    /// Drop the cached reference state. The next call must be
+    /// `set_reference`/`set_reference_with_options` again.
+    pub fn clear_reference(&mut self) {
+        self.has_cached_reference = false;
+        if let Some(half) = self.half_res.as_mut() {
+            half.has_cached_reference = false;
+        }
     }
 
     /// Compute butteraugli against the cached reference (must follow a
@@ -324,14 +394,48 @@ impl<R: Runtime> Butteraugli<R> {
     ///
     /// If [`set_reference`] has not yet been called.
     pub fn compute_with_reference(&mut self, dist_srgb: &[u8]) -> GpuButteraugliResult {
-        assert!(
-            self.has_cached_reference,
-            "compute_with_reference requires a prior set_reference"
-        );
+        self.compute_with_reference_inner(dist_srgb)
+            .expect("matching dimensions + cached reference never fail")
+    }
+
+    /// `compute_with_reference` returning `Result` — the only error
+    /// surface is `Error::DimensionMismatch` and `Error::NoCachedReference`.
+    pub fn try_compute_with_reference(&mut self, dist_srgb: &[u8]) -> Result<GpuButteraugliResult> {
+        self.compute_with_reference_inner(dist_srgb)
+    }
+
+    fn compute_with_reference_inner(&mut self, dist_srgb: &[u8]) -> Result<GpuButteraugliResult> {
+        if !self.has_cached_reference {
+            return Err(Error::NoCachedReference);
+        }
+        self.check_dims(dist_srgb)?;
         self.populate_linear_from_srgb(false, dist_srgb);
         // do_a=false: reference side is cached; do_b=true: distorted side needs computing.
         self.run_pipeline_from_linear(false, true);
-        reduction::reduce::<R>(&self.client, self.diffmap_buf.clone(), self.n)
+        Ok(reduction::reduce::<R>(
+            &self.client,
+            self.diffmap_buf.clone(),
+            self.n,
+        ))
+    }
+
+    fn check_dims(&self, srgb: &[u8]) -> Result<()> {
+        let expected = self.n * 3;
+        if srgb.len() != expected {
+            Err(Error::DimensionMismatch {
+                expected,
+                got: srgb.len(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn set_params_recursive(&mut self, params: &ButteraugliParams) {
+        self.params = *params;
+        if let Some(half) = self.half_res.as_mut() {
+            half.params = *params;
+        }
     }
 
     /// Internal: run the pipeline assuming `lin_a` and/or `lin_b` are
@@ -474,7 +578,7 @@ impl<R: Runtime> Butteraugli<R> {
                 ArrayArg::from_raw_parts(bl[0].clone(), self.n),
                 ArrayArg::from_raw_parts(bl[1].clone(), self.n),
                 ArrayArg::from_raw_parts(bl[2].clone(), self.n),
-                DEFAULT_INTENSITY_MULTIPLIER,
+                self.params.intensity_target,
             );
         }
     }
@@ -719,8 +823,7 @@ impl<R: Runtime> Butteraugli<R> {
     /// Compute the AC half of the diffmap: 6 Malta diffs + 2 L2-asym
     /// (HF X/Y) + 3 L2 (MF X/Y/B). Mirrors CPU `compute_psycho_diff_malta`.
     fn compute_psycho_diff(&self) {
-        // hf_asymmetry default = 1.0 → all multiplicative factors collapse.
-        let asym = HF_ASYMMETRY as f64;
+        let asym = self.params.hf_asymmetry as f64;
         let sqrt_asym = asym.sqrt();
 
         // Index conventions: freq[k] where k ∈ {0=UHF, 1=HF, 2=MF, 3=LF};
@@ -814,15 +917,15 @@ impl<R: Runtime> Butteraugli<R> {
             &self.freq_a[1][0],
             &self.freq_b[1][0],
             &self.block_diff_ac[0],
-            (WMUL[0] as f32) * HF_ASYMMETRY,
-            (WMUL[0] as f32) / HF_ASYMMETRY,
+            (WMUL[0] as f32) * self.params.hf_asymmetry,
+            (WMUL[0] as f32) / self.params.hf_asymmetry,
         );
         self.l2_diff_asym(
             &self.freq_a[1][1],
             &self.freq_b[1][1],
             &self.block_diff_ac[1],
-            (WMUL[1] as f32) * HF_ASYMMETRY,
-            (WMUL[1] as f32) / HF_ASYMMETRY,
+            (WMUL[1] as f32) * self.params.hf_asymmetry,
+            (WMUL[1] as f32) / self.params.hf_asymmetry,
         );
         // WMUL[2] = 0.0, skip HF B.
 
@@ -976,6 +1079,7 @@ impl<R: Runtime> Butteraugli<R> {
                 ArrayArg::from_raw_parts(self.block_diff_ac[1].clone(), self.n),
                 ArrayArg::from_raw_parts(self.block_diff_ac[2].clone(), self.n),
                 ArrayArg::from_raw_parts(self.diffmap_buf.clone(), self.n),
+                self.params.xmul,
             );
         }
     }
@@ -1133,6 +1237,33 @@ impl<R: Runtime> Butteraugli<R> {
     /// state is valid.
     pub fn has_cached_reference(&self) -> bool {
         self.has_cached_reference
+    }
+
+    /// The active comparison parameters (last set via
+    /// `compute_with_options` / `set_reference_with_options`). Defaults
+    /// after construction.
+    pub fn params(&self) -> &ButteraugliParams {
+        &self.params
+    }
+
+    /// Read the diffmap into a caller-supplied buffer (no allocation).
+    /// `dst.len()` must be ≥ `width × height`. Use this when scoring in
+    /// a hot loop to skip the per-call `Vec` allocation that
+    /// [`copy_diffmap`] does.
+    pub fn copy_diffmap_to(&self, dst: &mut [f32]) -> Result<()> {
+        let bytes = self
+            .client
+            .read_one(self.diffmap_buf.clone())
+            .expect("read_one diffmap");
+        let src = f32::from_bytes(&bytes);
+        if dst.len() < src.len() {
+            return Err(Error::DimensionMismatch {
+                expected: src.len(),
+                got: dst.len(),
+            });
+        }
+        dst[..src.len()].copy_from_slice(src);
+        Ok(())
     }
 
     /// Half-resolution sibling for the multi-resolution pass. Public so
