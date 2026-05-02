@@ -104,7 +104,9 @@ impl<R: Runtime> BatchBuffers<R> {
     fn new(client: &ComputeClient<R>, width: u32, height: u32, batch_n: usize) -> Self {
         let plane = (width * height) as usize;
         let total = plane * batch_n;
-        let src_u8_batch = client.create_from_slice(&vec![0_u8; total * 3]);
+        // sRGB bytes uploaded as u32 — see colors.rs / pipeline.rs
+        // for the wgpu Array<u8> caveat.
+        let src_u8_batch = client.create_from_slice(u32::as_bytes(&vec![0_u32; total * 3]));
         Self {
             width,
             height,
@@ -252,7 +254,9 @@ impl<R: Runtime> ButteraugliBatch<R> {
             "batch length mismatch"
         );
         assert!(self.inner.has_cached_reference(), "set_reference first");
-        self.full.src_u8_batch = self.client.create_from_slice(dist_batch);
+        // Widen each byte to u32 so wgpu/Metal can read it natively.
+        let widened: Vec<u32> = dist_batch.iter().map(|&b| b as u32).collect();
+        self.full.src_u8_batch = self.client.create_from_slice(u32::as_bytes(&widened));
 
         // Phase 1: sRGB → linear; downsample linear before opsin
         // overwrites lin_b_batch with XYB.

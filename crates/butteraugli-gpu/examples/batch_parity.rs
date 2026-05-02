@@ -8,6 +8,8 @@ use butteraugli_gpu::{Butteraugli, ButteraugliBatch};
 
 #[cfg(feature = "cuda")]
 type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 
 fn make_image(w: u32, h: u32, salt: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity((w * h * 3) as usize);

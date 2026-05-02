@@ -405,7 +405,6 @@ dependencies = [
  "image",
  "imgref",
  "rgb",
- "zune-image",
 ]
 
 [[package]]

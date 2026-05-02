@@ -23,6 +23,8 @@ use rgb::{RGB, RGB8};
 
 #[cfg(feature = "cuda")]
 type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 
 const WARM: usize = 3;
 const ITERS: usize = 15;

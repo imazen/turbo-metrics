@@ -1,0 +1,98 @@
+name: butteraugli-gpu CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "crates/butteraugli-gpu/**"
+      - ".github/workflows/butteraugli-gpu-ci.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - "crates/butteraugli-gpu/**"
+      - ".github/workflows/butteraugli-gpu-ci.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compile:
+    name: Compile (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: butteraugli-gpu-${{ matrix.os }}
+          cache-targets: false
+      - name: Build (no_default_features + wgpu)
+        run: cargo build -p butteraugli-gpu --no-default-features --features wgpu --release --all-targets
+
+  metal-tests:
+    name: Tests (Metal, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: butteraugli-gpu-tests-${{ matrix.os }}
+          cache-targets: false
+
+      - name: Verify Metal availability
+        run: system_profiler SPDisplaysDataType | head -40 || true
+
+      - name: Print cubecl capabilities (Metal)
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example print_capabilities
+
+      - name: Per-kernel parity — colors (sRGB + opsin)
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example colors_parity
+
+      - name: Per-kernel parity — blur (separable Gaussian)
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example blur_parity
+
+      - name: Per-kernel parity — reduction
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example reduction_parity
+
+      - name: Reduction integration tests
+        if: always()
+        run: cargo test -p butteraugli-gpu --no-default-features --features wgpu --release --test reduction_parity
+
+      - name: Full-pipeline smoke (end_to_end)
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example end_to_end
+
+      - name: Real-image parity vs CPU butteraugli
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example parity_real_image
+
+      - name: Synthetic perturbation parity vs CPU
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example parity_vs_cpu
+
+      - name: Options smoke (params + lifecycle)
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example options_smoke
+
+      - name: Batch parity smoke
+        if: always()
+        run: cargo run -p butteraugli-gpu --no-default-features --features wgpu --release --example batch_parity

@@ -11,6 +11,8 @@ use butteraugli_gpu::Butteraugli;
 
 #[cfg(feature = "cuda")]
 type Backend = cubecl::cuda::CudaRuntime;
+#[cfg(all(feature = "wgpu", not(feature = "cuda")))]
+type Backend = cubecl::wgpu::WgpuRuntime;
 
 fn make_pair(w: u32, h: u32) -> (Vec<u8>, Vec<u8>) {
     let n = (w * h * 3) as usize;

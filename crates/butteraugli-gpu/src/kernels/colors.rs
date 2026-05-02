@@ -16,14 +16,15 @@ const GAMMA_MUL: f32 = 19.245013259874995;
 const GAMMA_ADD: f32 = 9.971063576929914;
 const GAMMA_SUB: f32 = 23.16046239805755;
 
-/// Per-element sRGB → linear RGB on a packed `[R,G,B,R,G,B,…]` u8 buffer
-/// produces a planar f32 RGB triple. Output planes are laid out
-/// contiguously: `dst_r[idx]`, `dst_g[idx]`, `dst_b[idx]` for each pixel.
+/// Per-element sRGB → linear RGB. `src` holds `n_pixels × 3` bytes
+/// widened to `u32` on the host (WGSL has no `u8` storage type, so
+/// `Array<u8>` reads zero on cubecl-wgpu's Metal backend). Output:
+/// planar f32 RGB — `dst_r[idx]`, `dst_g[idx]`, `dst_b[idx]` per pixel.
 ///
 /// Each thread handles one pixel; launch with `n_pixels` total units.
 #[cube(launch_unchecked)]
 pub fn srgb_u8_to_linear_planar_kernel(
-    src: &Array<u8>,
+    src: &Array<u32>,
     dst_r: &mut Array<f32>,
     dst_g: &mut Array<f32>,
     dst_b: &mut Array<f32>,
@@ -43,10 +44,9 @@ pub fn srgb_u8_to_linear_planar_kernel(
 }
 
 /// sRGB transfer function with linear toe — matches the CPU butteraugli
-/// implementation. Operating on the integer 0..=255 byte directly lets us
-/// skip a u8 → f32 / 255 division before the branch.
+/// implementation. Input is a u32 holding a single byte value 0..=255.
 #[cube]
-fn srgb_byte_to_linear(v: u8) -> f32 {
+fn srgb_byte_to_linear(v: u32) -> f32 {
     let f = (v as f32) * (1.0 / 255.0);
     if f <= 0.04045 {
         f / 12.92

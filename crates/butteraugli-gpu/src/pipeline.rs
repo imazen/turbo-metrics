@@ -225,8 +225,11 @@ impl<R: Runtime> Butteraugli<R> {
     pub fn new(client: ComputeClient<R>, width: u32, height: u32) -> Self {
         let n = (width * height) as usize;
         let n_bytes = n * 3;
-        let src_u8_a = client.create_from_slice(&vec![0_u8; n_bytes]);
-        let src_u8_b = client.create_from_slice(&vec![0_u8; n_bytes]);
+        // sRGB bytes are uploaded widened to u32 — wgpu's WGSL backend
+        // has no u8 storage type, so we keep all platforms on a u32
+        // path (CUDA happily handles either).
+        let src_u8_a = client.create_from_slice(u32::as_bytes(&vec![0_u32; n_bytes]));
+        let src_u8_b = client.create_from_slice(u32::as_bytes(&vec![0_u32; n_bytes]));
 
         let lin_a = alloc_3(&client, n);
         let lin_b = alloc_3(&client, n);
@@ -515,10 +518,13 @@ impl<R: Runtime> Butteraugli<R> {
     fn populate_linear_from_srgb(&mut self, is_a: bool, srgb: &[u8]) {
         let n_bytes = self.n * 3;
         assert_eq!(srgb.len(), n_bytes, "input length mismatch");
+        // Widen each sRGB byte to a u32 so wgpu/Metal can read it
+        // natively (WGSL has no u8 storage type).
+        let widened: Vec<u32> = srgb.iter().map(|&b| b as u32).collect();
         if is_a {
-            self.src_u8_a = self.client.create_from_slice(srgb);
+            self.src_u8_a = self.client.create_from_slice(u32::as_bytes(&widened));
         } else {
-            self.src_u8_b = self.client.create_from_slice(srgb);
+            self.src_u8_b = self.client.create_from_slice(u32::as_bytes(&widened));
         }
         unsafe {
             self.launch_srgb_to_linear(is_a);

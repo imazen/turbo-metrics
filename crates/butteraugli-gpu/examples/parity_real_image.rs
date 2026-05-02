@@ -59,7 +59,9 @@ fn rgb_buf_to_imgvec(buf: &[u8], width: u32, height: u32) -> ImgVec<RGB8> {
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/imageflow-dotnet-server/examples/hosting_bundle.png".to_string()
+        // Default to a workspace test image so CI can run this without args.
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        format!("{manifest}/../dssim-cuda/test_data/source.png")
     });
     let (ref_rgb, width, height) = load_rgb8(&path);
     println!("Loaded {} ({}×{})", path, width, height);
