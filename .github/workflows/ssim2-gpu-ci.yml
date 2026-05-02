@@ -100,29 +100,8 @@ jobs:
         if: always()
         run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example batch_smoke
 
-  # Windows runtime tests via wgpu's DX12 backend. GitHub-hosted
-  # windows-latest exposes a software D3D12 adapter (WARP) that wgpu
-  # can use, plus any installed GPU driver. The compute shaders we
-  # use (no atomic<f64>, no warp ops, no Tensor cores) are squarely in
-  # WARP's supported feature set, so this should run end-to-end.
-  dx12-tests:
-    name: Tests (DX12, windows-latest)
-    runs-on: windows-latest
-    env:
-      # cubecl-wgpu defaults to Vulkan on non-macOS; force DX12 since
-      # Windows runners don't ship a Vulkan ICD.
-      AUTO_GRAPHICS_BACKEND: dx12
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ssim2-gpu-tests-windows
-      - name: Print cubecl capabilities (DX12)
-        run: cargo run -p ssim2-gpu --no-default-features --features wgpu --release --example print_capabilities
-      - name: Doctests
-        if: always()
-        run: cargo test -p ssim2-gpu --no-default-features --features wgpu --release --doc
-      - name: Integration tests
-        if: always()
-        run: cargo test -p ssim2-gpu --no-default-features --features wgpu --release --test parity_lock
+  # GitHub-hosted windows-latest doesn't expose a wgpu-compatible
+  # adapter (no real GPU; the WARP fallback isn't picked up by wgpu's
+  # request_adapter without force_fallback_adapter, which cubecl-wgpu
+  # 0.10 doesn't surface). Skipped here — runs locally on a Windows
+  # box with an actual GPU driver, or on a self-hosted runner.
