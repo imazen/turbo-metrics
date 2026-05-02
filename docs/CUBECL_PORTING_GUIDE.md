@@ -40,6 +40,14 @@ rebuilds are ~2 min.
 These bit me at least once each. Document them in the new crate's
 `PORT_STATUS.md` so the next person doesn't relearn.
 
+**For the long-form catalog of every gotcha, with symptoms / causes /
+detect / fix / code examples, see [`CUBECL_GOTCHAS.md`](CUBECL_GOTCHAS.md).**
+That file expands the list below into ~30 entries across codegen,
+launch API, backend specifics, pipeline orchestration, validation,
+performance, and toolchain. Read it once before starting; refer back
+to it when something breaks. It also has a quick-reference checklist
+at the bottom for when you hit a bug and need to localise.
+
 1. **`f32::exp` is not registered as a cube op.** Use
    `f32::powf(2.0, x * LOG2_E)` where `LOG2_E ≈ 1.4426950`.
 2. **`Atomic<f32>::fetch_max` codegens to `atomicMax(float*, float)`**
