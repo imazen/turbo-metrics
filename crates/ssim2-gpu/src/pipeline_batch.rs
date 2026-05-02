@@ -129,7 +129,20 @@ pub struct Ssim2Batch<R: Runtime> {
 impl<R: Runtime> Ssim2Batch<R> {
     /// Allocate per-instance buffers for scoring `batch_size` images
     /// of `width × height`. Returns `Err(InvalidImageSize)` for
-    /// images smaller than 8×8 (matches `Ssim2::new`).
+    /// images smaller than 8×8 (matches `Ssim2::new`), or
+    /// `Err(InvalidBatchSize)` for `batch_size == 0`.
+    ///
+    /// ```no_run
+    /// use cubecl::Runtime;
+    /// use cubecl::cuda::CudaRuntime;
+    /// use ssim2_gpu::Ssim2Batch;
+    ///
+    /// let client = CudaRuntime::client(&Default::default());
+    /// let b = Ssim2Batch::<CudaRuntime>::new(client, 256, 256, 4)?;
+    /// assert_eq!(b.batch_size(), 4);
+    /// assert_eq!(b.dimensions(), (256, 256));
+    /// # Ok::<(), ssim2_gpu::Error>(())
+    /// ```
     pub fn new(
         client: ComputeClient<R>,
         width: u32,
@@ -137,7 +150,7 @@ impl<R: Runtime> Ssim2Batch<R> {
         batch_size: u32,
     ) -> Result<Self> {
         if batch_size == 0 {
-            return Err(Error::InvalidImageSize);
+            return Err(Error::InvalidBatchSize { got: 0, max: 0 });
         }
         let inner = Ssim2::new(client.clone(), width, height)?;
 
@@ -186,25 +199,45 @@ impl<R: Runtime> Ssim2Batch<R> {
     }
 
     /// Score up to `batch_size` distorted images in one batched
-    /// pipeline launch. Returns `Err(NoCachedReference)` if
-    /// `set_reference` hasn't been called, `DimensionMismatch` if any
-    /// distorted image's byte length is wrong, and panics if more than
-    /// `batch_size` images are passed.
+    /// pipeline launch.
+    ///
+    /// Returns:
+    /// - `Err(NoCachedReference)` if `set_reference` hasn't been called.
+    /// - `Err(DimensionMismatch)` if any distorted image's byte
+    ///   length doesn't match the configured size.
+    /// - `Err(InvalidBatchSize)` if `dis.len() > batch_size`.
     ///
     /// Fewer than `batch_size` images is fine — the unused slots get
-    /// zero-padded; the returned `Vec` only contains the scores the
-    /// caller asked for.
+    /// zero-padded; the returned `Vec` only contains scores for the
+    /// images the caller actually passed.
+    ///
+    /// ```no_run
+    /// use cubecl::Runtime;
+    /// use cubecl::cuda::CudaRuntime;
+    /// use ssim2_gpu::Ssim2Batch;
+    ///
+    /// let client = CudaRuntime::client(&Default::default());
+    /// let mut batch = Ssim2Batch::<CudaRuntime>::new(client, 256, 256, 8)?;
+    /// let r = vec![0_u8; 256 * 256 * 3];
+    /// batch.set_reference(&r)?;
+    ///
+    /// // Pass 3 images even though batch_size=8 — fine.
+    /// let candidates: Vec<Vec<u8>> = (0..3).map(|_| r.clone()).collect();
+    /// let scores = batch.compute_batch(&candidates)?;
+    /// assert_eq!(scores.len(), 3);
+    /// # Ok::<(), ssim2_gpu::Error>(())
+    /// ```
     pub fn compute_batch(&mut self, dis: &[Vec<u8>]) -> Result<Vec<GpuSsim2Result>> {
         if !self.inner.has_cached_reference() {
             return Err(Error::NoCachedReference);
         }
         let n_in = dis.len();
-        assert!(
-            (n_in as u32) <= self.batch_size,
-            "compute_batch called with {} > batch_size = {}",
-            n_in,
-            self.batch_size
-        );
+        if (n_in as u32) > self.batch_size {
+            return Err(Error::InvalidBatchSize {
+                got: n_in,
+                max: self.batch_size as usize,
+            });
+        }
         if n_in == 0 {
             return Ok(Vec::new());
         }

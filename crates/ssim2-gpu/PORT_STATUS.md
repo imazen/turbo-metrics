@@ -129,7 +129,7 @@ crates/ssim2-gpu/
 │   ├── bench_batch.rs       # batched-vs-sequential per-image throughput
 │   └── end_to_end.rs
 └── tests/
-    └── parity_lock.rs       # 3 CI-friendly regression tests
+    └── parity_lock.rs       # 21 integration tests (parity, batched, error paths, dimensions, lifecycle)
 ```
 
 ## Build commands

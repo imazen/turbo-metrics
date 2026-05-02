@@ -169,6 +169,17 @@ const SUMS_LEN: usize = NUM_SCALES * 3 * 3 * 2;
 impl<R: Runtime> Ssim2<R> {
     /// Allocate every per-instance buffer for the given image size.
     /// Returns `Err(InvalidImageSize)` for images smaller than 8×8.
+    ///
+    /// ```no_run
+    /// use cubecl::Runtime;
+    /// use cubecl::cuda::CudaRuntime;
+    /// use ssim2_gpu::Ssim2;
+    ///
+    /// let client = CudaRuntime::client(&Default::default());
+    /// let s = Ssim2::<CudaRuntime>::new(client, 1024, 768)?;
+    /// assert_eq!(s.dimensions(), (1024, 768));
+    /// # Ok::<(), ssim2_gpu::Error>(())
+    /// ```
     pub fn new(client: ComputeClient<R>, width: u32, height: u32) -> Result<Self> {
         if width < 8 || height < 8 {
             return Err(Error::InvalidImageSize);
@@ -256,6 +267,23 @@ impl<R: Runtime> Ssim2<R> {
 
     /// Score one image pair, both sRGB packed RGB u8 of length
     /// `width × height × 3`.
+    ///
+    /// Returns `Err(DimensionMismatch)` if either buffer's length
+    /// doesn't match the configured image size.
+    ///
+    /// ```no_run
+    /// use cubecl::Runtime;
+    /// use cubecl::cuda::CudaRuntime;
+    /// use ssim2_gpu::Ssim2;
+    ///
+    /// let client = CudaRuntime::client(&Default::default());
+    /// let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+    /// let r = vec![0_u8; 256 * 256 * 3];
+    /// let d = vec![0_u8; 256 * 256 * 3];
+    /// let score = s.compute(&r, &d)?.score;
+    /// assert!((score - 100.0).abs() < 0.1); // identical → ~100
+    /// # Ok::<(), ssim2_gpu::Error>(())
+    /// ```
     pub fn compute(&mut self, ref_srgb: &[u8], dist_srgb: &[u8]) -> Result<GpuSsim2Result> {
         self.check_dims(ref_srgb)?;
         self.check_dims(dist_srgb)?;
@@ -281,6 +309,19 @@ impl<R: Runtime> Ssim2<R> {
     /// Cache reference-side state for many comparisons against a fixed
     /// reference. Subsequent `compute_with_reference` calls skip the
     /// reference-side pyramid + XYB + ref²-blur work.
+    ///
+    /// ```no_run
+    /// use cubecl::Runtime;
+    /// use cubecl::cuda::CudaRuntime;
+    /// use ssim2_gpu::Ssim2;
+    ///
+    /// let client = CudaRuntime::client(&Default::default());
+    /// let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+    /// let r = vec![0_u8; 256 * 256 * 3];
+    /// s.set_reference(&r)?;
+    /// assert!(s.has_cached_reference());
+    /// # Ok::<(), ssim2_gpu::Error>(())
+    /// ```
     pub fn set_reference(&mut self, ref_srgb: &[u8]) -> Result<()> {
         self.check_dims(ref_srgb)?;
         self.upload_and_srgb_to_linear(true, ref_srgb);
@@ -307,8 +348,26 @@ impl<R: Runtime> Ssim2<R> {
         self.has_cached_reference
     }
 
-    /// Compute against the cached reference. Returns `NoCachedReference`
-    /// if `set_reference` hasn't been called.
+    /// Compute against the cached reference. Returns
+    /// `Err(NoCachedReference)` if `set_reference` hasn't been called,
+    /// `Err(DimensionMismatch)` if the buffer's length doesn't match
+    /// the configured image size.
+    ///
+    /// ```no_run
+    /// use cubecl::Runtime;
+    /// use cubecl::cuda::CudaRuntime;
+    /// use ssim2_gpu::{Error, Ssim2};
+    ///
+    /// let client = CudaRuntime::client(&Default::default());
+    /// let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+    /// // Without set_reference first:
+    /// let d = vec![0_u8; 256 * 256 * 3];
+    /// assert!(matches!(
+    ///     s.compute_with_reference(&d),
+    ///     Err(Error::NoCachedReference)
+    /// ));
+    /// # Ok::<(), ssim2_gpu::Error>(())
+    /// ```
     pub fn compute_with_reference(&mut self, dist_srgb: &[u8]) -> Result<GpuSsim2Result> {
         if !self.has_cached_reference {
             return Err(Error::NoCachedReference);

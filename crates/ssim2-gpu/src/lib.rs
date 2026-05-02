@@ -14,10 +14,84 @@
 //! `crates/ssimulacra2-cuda/`, which uses the same Charalampidis
 //! recursive Gaussian and the same 6-octave reduction.
 //!
+//! ## Single-image usage
+//!
+//! ```no_run
+//! use cubecl::Runtime;
+//! use cubecl::cuda::CudaRuntime;
+//! use ssim2_gpu::Ssim2;
+//!
+//! let client = CudaRuntime::client(&Default::default());
+//! let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+//!
+//! let ref_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
+//! let dist_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
+//!
+//! let result = s.compute(&ref_srgb, &dist_srgb)?;
+//! println!("score = {:.3}", result.score);
+//! # Ok::<(), ssim2_gpu::Error>(())
+//! ```
+//!
+//! ## Cached-reference usage (encoder rate-distortion)
+//!
+//! ```no_run
+//! use cubecl::Runtime;
+//! use cubecl::cuda::CudaRuntime;
+//! use ssim2_gpu::Ssim2;
+//!
+//! # fn candidates() -> Vec<Vec<u8>> { vec![] }
+//! let client = CudaRuntime::client(&Default::default());
+//! let mut s = Ssim2::<CudaRuntime>::new(client, 256, 256)?;
+//!
+//! let ref_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
+//! s.set_reference(&ref_srgb)?;
+//!
+//! for distorted_candidate in candidates() {
+//!     let r = s.compute_with_reference(&distorted_candidate)?;
+//!     // ... use r.score in the rate-distortion search ...
+//! }
+//! # Ok::<(), ssim2_gpu::Error>(())
+//! ```
+//!
+//! ## Batched usage (N images vs one cached reference)
+//!
+//! ```no_run
+//! use cubecl::Runtime;
+//! use cubecl::cuda::CudaRuntime;
+//! use ssim2_gpu::Ssim2Batch;
+//!
+//! # fn collect_distorted() -> Vec<Vec<u8>> { vec![] }
+//! let client = CudaRuntime::client(&Default::default());
+//! let mut batch = Ssim2Batch::<CudaRuntime>::new(client, 256, 256, 8)?;
+//!
+//! let ref_srgb: Vec<u8> = vec![0; 256 * 256 * 3];
+//! batch.set_reference(&ref_srgb)?;
+//!
+//! let dis_images: Vec<Vec<u8>> = collect_distorted();
+//! let results = batch.compute_batch(&dis_images)?;
+//! for r in &results {
+//!     println!("score = {:.3}", r.score);
+//! }
+//! # Ok::<(), ssim2_gpu::Error>(())
+//! ```
+//!
+//! ## Score interpretation
+//!
+//! Output is in roughly the 0–100 range:
+//! - **100** = identical (or near-identical)
+//! - **90+** = visually indistinguishable for most observers
+//! - **70+** = high quality
+//! - **30–60** = noticeable distortion
+//! - **<0** = the SSIMULACRA2 polynomial overshoot region for severely
+//!   distorted images; the CPU `ssimulacra2` produces the same
+//!   negative values there — not a GPU-side bug.
+//!
 //! ## Status
 //!
 //! Initial port from `ssimulacra2-cuda`. See `PORT_STATUS.md` and
-//! `HANDOFF.md`.
+//! `HANDOFF.md`. Validated against CPU `ssimulacra2` v0.5.1 to
+//! ≤ 0.06 % relative on JPEG q5..q90; cached and batched paths agree
+//! with the direct path to ≤ 1.3e-5 absolute.
 
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_arguments)]
@@ -51,6 +125,9 @@ pub enum Error {
     NoCachedReference,
     /// Image is smaller than 8×8 — SSIMULACRA2 is undefined there.
     InvalidImageSize,
+    /// `Ssim2Batch::new` was called with `batch_size == 0`, or
+    /// `compute_batch` got more inputs than the instance's batch_size.
+    InvalidBatchSize { got: usize, max: usize },
 }
 
 impl std::fmt::Display for Error {
@@ -62,6 +139,10 @@ impl std::fmt::Display for Error {
             ),
             Error::NoCachedReference => write!(f, "no cached reference; call set_reference first"),
             Error::InvalidImageSize => write!(f, "image must be at least 8×8 pixels"),
+            Error::InvalidBatchSize { got, max } => write!(
+                f,
+                "invalid batch size: got {got} images for batch_size = {max}"
+            ),
         }
     }
 }

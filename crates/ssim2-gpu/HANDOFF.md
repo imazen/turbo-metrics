@@ -22,8 +22,11 @@ path drift ≤ 8e-6.
   per-image fused (Σ, Σ⁴) reduction. Per-image throughput at 256²
   hits 8.7× speedup vs the sequential cached path at N=4. Scores
   agree with `Ssim2::compute_with_reference` to ≤ 1.3e-5 absolute.
-- **3 lock tests** (`tests/parity_lock.rs`) cover JPEG-corpus parity,
-  cached-vs-direct equivalence, and identical-image → 100. All green.
+- **21 integration tests + 9 doctests** in `tests/parity_lock.rs` and
+  the public-API rustdoc cover: JPEG-corpus parity, cached / batched
+  path equivalence, identical-image → 100, every error variant, partial
+  batch, repeated batch calls, clear_reference round-trips, odd /
+  small / non-256² dimensions through both single and batch paths.
 
 Repo: https://github.com/imazen/turbo-metrics (commit at handoff: see
 `git log -1` for the most recent ssim2-gpu commit).
@@ -67,8 +70,25 @@ In-tree examples (all run on RTX 5070 + CUDA 13.2):
 - `batch_smoke` — `Ssim2Batch` per-call equivalence.
 - `end_to_end` — synthetic stripe pattern, score sanity print.
 
-In-tree tests (`tests/parity_lock.rs`): 3 cases — `parity_jpeg_corpus`,
-`cached_reference_matches_direct`, `identical_image_scores_100`.
+In-tree tests (`tests/parity_lock.rs`, all green):
+
+- **Parity vs CPU `ssimulacra2`:** `parity_jpeg_corpus`,
+  `identical_image_scores_100`, `dim_odd_non_square` (200×150),
+  `dim_minimum_supported` (16×16, 2 active scales),
+  `dim_larger_512x384`.
+- **Cached / batched equivalence:** `cached_reference_matches_direct`,
+  `batch_matches_single_image`, `batch_partial_fill`,
+  `batch_repeated_calls_reset_sums`, `batch_empty_input_returns_empty`,
+  `dim_odd_with_batch` (123×45).
+- **Error paths:** `err_invalid_image_size`,
+  `err_invalid_batch_size_zero`, `err_invalid_batch_size_too_many`,
+  `err_dim_mismatch_compute`, `err_dim_mismatch_set_reference`,
+  `err_dim_mismatch_compute_with_reference`,
+  `err_dim_mismatch_compute_batch`, `err_no_cached_reference`.
+- **Lifecycle:** `clear_reference_then_set_again`,
+  `batch_clear_reference_round_trip`.
+
+Plus 9 compile-only doctests on the public API (`cargo test --doc`).
 
 ## What's left
 
