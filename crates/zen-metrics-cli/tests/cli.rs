@@ -108,6 +108,23 @@ fn score_ssim2_cpu_identical_is_high() {
     assert!(s > 95.0, "expected ~100, got {s}");
 }
 
+#[cfg(all(feature = "cpu-metrics", feature = "avif"))]
+#[test]
+fn score_decodes_avif_fixture() {
+    // Fixture is checked into the repo — no skip path.
+    let dir = fixtures_dir();
+    let s = run_score("zensim", &dir.join("ref_64.png"), &dir.join("ref_64.avif"));
+    assert!(s.is_finite() && s > 0.0, "got {s}");
+}
+
+#[cfg(all(feature = "cpu-metrics", feature = "jxl"))]
+#[test]
+fn score_decodes_jxl_fixture() {
+    let dir = fixtures_dir();
+    let s = run_score("zensim", &dir.join("ref_64.png"), &dir.join("ref_64.jxl"));
+    assert!(s.is_finite() && s > 0.0, "got {s}");
+}
+
 #[cfg(all(feature = "cpu-metrics", feature = "webp"))]
 #[test]
 fn score_works_across_png_and_webp_decoders() {
