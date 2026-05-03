@@ -27,6 +27,7 @@ members = [
     "crates/zensim-cuda-kernel",
     "crates/turbo-metrics",
     "crates/turbo-metrics-cli",
+    "crates/zen-metrics-cli",
     "crates/vmaf",
     "crates/vmaf-cuda",
     "crates/vmaf-cuda-kernel",
