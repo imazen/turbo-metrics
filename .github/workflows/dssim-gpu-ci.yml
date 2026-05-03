@@ -1,0 +1,79 @@
+name: dssim-gpu CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "crates/dssim-gpu/**"
+      - "crates/dssim-cuda/test_data/**"
+      - ".github/workflows/dssim-gpu-ci.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - "crates/dssim-gpu/**"
+      - "crates/dssim-cuda/test_data/**"
+      - ".github/workflows/dssim-gpu-ci.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Compile-only check across host platforms. The wgpu backend builds
+  # everywhere (no system tools beyond a working Rust toolchain). CUDA
+  # / HIP need their respective runtimes and aren't covered here; the
+  # pre-existing dssim-cuda CI covers the NVIDIA path.
+  compile:
+    name: Compile (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dssim-gpu-${{ matrix.os }}
+          cache-targets: false
+      - name: Build (no_default_features + wgpu)
+        run: cargo build -p dssim-gpu --no-default-features --features wgpu --release --all-targets
+      - name: Build (no_default_features + cpu, build-only)
+        run: cargo build -p dssim-gpu --no-default-features --features cpu --release
+
+  # Runtime tests on macOS via Metal. The default `fast-reduction`
+  # feature uses Atomic<f32>::fetch_add which Metal silently no-ops
+  # (per ssim2-gpu's documented reality check), so disable it here —
+  # the portable two-stage reduction is what actually works on Metal.
+  metal-tests:
+    name: Tests (Metal, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-26-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dssim-gpu-tests-${{ matrix.os }}
+
+      - name: Verify Metal availability
+        run: system_profiler SPDisplaysDataType | head -40 || true
+
+      - name: Doctests
+        run: cargo test -p dssim-gpu --no-default-features --features wgpu --release --doc
+      - name: Integration tests (parity_lock)
+        if: always()
+        run: cargo test -p dssim-gpu --no-default-features --features wgpu --release --test parity_lock
+      - name: Full-pipeline smoke (end_to_end)
+        if: always()
+        run: cargo run -p dssim-gpu --no-default-features --features wgpu --release --example end_to_end
