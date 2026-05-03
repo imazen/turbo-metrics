@@ -90,3 +90,4 @@ cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std"
 
 [dev-dependencies]
 tempfile = "3"
+serde_json = { workspace = true }
