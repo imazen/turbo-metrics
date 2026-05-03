@@ -1,6 +1,6 @@
 [package]
 name = "zen-metrics-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "Unified CLI for decoding zen image formats and scoring perceptual quality metrics on CPU and GPU"
 authors = ["Lilith River <support@imazen.io>"]
 homepage.workspace = true
@@ -74,6 +74,38 @@ gpu-cpu = [
     "cubecl?/cpu",
 ]
 
+# `sweep` enables the codec-driving subcommand that encodes a source image
+# across a (q, knob_tuple) Cartesian grid and scores each variant via the
+# normal metric backends. Codecs stay "dumb" — the sweep driver pokes their
+# `__expert` / public encode APIs directly without any in-codec picker glue.
+#
+# Codec coverage at zen-metrics-cli 0.3.0:
+# - zenwebp 0.4.5, zenavif 0.1.7, zenjxl 0.2.1 each ship `__expert` and we
+#   opt in here for the full knob bundle.
+# - zenjpeg 0.8.3 (published) has no `__expert` feature — it lands in 0.8.4.
+#   For now the sweep driver does not include zenjpeg; it can be added once
+#   0.8.4 (or a `path = ...` override) is wired through.
+sweep = [
+    "webp",
+    "avif",
+    "jxl",
+    "zenwebp?/__expert",
+    "zenavif?/__expert",
+    "zenjxl?/__expert",
+    # zenjxl gates JxlEncoderConfig behind the `zencodec` feature, which
+    # turns the wrapper struct on. Pull it through here so the sweep
+    # driver sees the public encoder type at all.
+    "zenjxl?/zencodec",
+    # The runner round-trips encoded bytes through a tempfile so the
+    # path-based decoder can sniff format identically to production.
+    "dep:tempfile",
+    # Encoders need rgb / imgref / zencodec / almost_enough at runtime.
+    "dep:rgb",
+    "dep:imgref",
+    "dep:zencodec",
+    "dep:almost-enough",
+]
+
 [dependencies]
 clap = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -88,6 +120,12 @@ zenjpeg = { version = "0.8.3", optional = true }
 zenwebp = { version = "0.4.5", optional = true }
 zenavif = { version = "0.1.7", optional = true }
 zenjxl = { version = "0.2.1", optional = true }
+
+# Pulled in by the `sweep` feature. zencodec exposes the EncodeJob /
+# Encoder traits that drive zenjxl encoding; almost_enough is the
+# cooperative-cancellation crate zenavif's encoder takes by value.
+zencodec = { version = "0.1.20", optional = true }
+almost-enough = { version = "0.4.3", optional = true }
 
 # zenpixels exposes the PixelBuffer / PixelSlice types returned by zen
 # decoders. We pin to a version compatible with the decoders above.
@@ -111,6 +149,12 @@ dssim-gpu = { path = "../dssim-gpu", optional = true, default-features = false }
 # CubeCL is required to construct GPU clients when any GPU backend is enabled.
 # Optional — pulled in by the gpu-* feature flags.
 cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std"], optional = true }
+
+# tempfile is used by the `sweep` runner to round-trip encoded bytes
+# through the path-based decoder. It is also used in the test suite,
+# which is why it's kept as a runtime dep gated on the `sweep` feature
+# rather than dev-only.
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

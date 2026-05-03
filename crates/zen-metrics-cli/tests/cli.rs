@@ -478,3 +478,130 @@ fn run_score(metric: &str, reference: &std::path::Path, distorted: &std::path::P
     let v: serde_json::Value = serde_json::from_str(s.trim()).expect("json");
     v["score"].as_f64().expect("score")
 }
+
+// ── sweep subcommand ────────────────────────────────────────────────────
+//
+// The `sweep` feature drives a codec across a (q, knob-tuple) Cartesian
+// grid and writes a Pareto TSV. The tests below exercise the full
+// pipeline (encode → decode-back → score) on the existing 64×64 PNG
+// fixture for each codec the sweep feature wires up.
+
+#[cfg(feature = "sweep")]
+#[test]
+fn sweep_zenwebp_emits_pareto_rows() {
+    let dir = fixtures_dir();
+    // Stage just one source image so we can predict the row count.
+    let staged = tempfile::tempdir().expect("tmp");
+    std::fs::copy(dir.join("ref_64.png"), staged.path().join("ref.png")).unwrap();
+    let out = staged.path().join("pareto.tsv");
+
+    let result = cli()
+        .args([
+            "sweep",
+            "--codec",
+            "zenwebp",
+            "--sources",
+            staged.path().to_str().unwrap(),
+            "--q-grid",
+            "50,90",
+            "--knob-grid",
+            r#"{"method": [4, 6]}"#,
+            "--metric",
+            "zensim",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        result.status.success(),
+        "sweep failed: stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let body = std::fs::read_to_string(&out).expect("read tsv");
+    let lines: Vec<&str> = body.lines().collect();
+    // 1 header + 4 cells (2 q × 2 method).
+    assert_eq!(lines.len(), 5, "got {} lines: {body}", lines.len());
+    assert!(lines[0].contains("score_zensim"));
+    for row in &lines[1..] {
+        // Every emitted row should have a parseable zensim score in the
+        // last column.
+        let score = row.split('\t').next_back().unwrap();
+        score
+            .parse::<f64>()
+            .unwrap_or_else(|e| panic!("bad zensim score {score:?} in row {row:?}: {e}"));
+    }
+}
+
+#[cfg(feature = "sweep")]
+#[test]
+fn sweep_zenavif_emits_pareto_rows() {
+    let dir = fixtures_dir();
+    let staged = tempfile::tempdir().expect("tmp");
+    std::fs::copy(dir.join("ref_64.png"), staged.path().join("ref.png")).unwrap();
+    let out = staged.path().join("pareto.tsv");
+
+    let result = cli()
+        .args([
+            "sweep",
+            "--codec",
+            "zenavif",
+            "--sources",
+            staged.path().to_str().unwrap(),
+            "--q-grid",
+            "75",
+            "--knob-grid",
+            r#"{"speed": [8]}"#,
+            "--metric",
+            "zensim",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        result.status.success(),
+        "sweep zenavif failed: stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let body = std::fs::read_to_string(&out).expect("read tsv");
+    let lines: Vec<&str> = body.lines().collect();
+    assert_eq!(lines.len(), 2, "expected 1 header + 1 cell, got {body}");
+}
+
+#[cfg(feature = "sweep")]
+#[test]
+fn sweep_zenjxl_emits_pareto_rows() {
+    let dir = fixtures_dir();
+    let staged = tempfile::tempdir().expect("tmp");
+    std::fs::copy(dir.join("ref_64.png"), staged.path().join("ref.png")).unwrap();
+    let out = staged.path().join("pareto.tsv");
+
+    let result = cli()
+        .args([
+            "sweep",
+            "--codec",
+            "zenjxl",
+            "--sources",
+            staged.path().to_str().unwrap(),
+            "--q-grid",
+            "75",
+            "--knob-grid",
+            r#"{"effort": [3]}"#,
+            "--metric",
+            "zensim",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        result.status.success(),
+        "sweep zenjxl failed: stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let body = std::fs::read_to_string(&out).expect("read tsv");
+    let lines: Vec<&str> = body.lines().collect();
+    assert_eq!(lines.len(), 2, "expected 1 header + 1 cell, got {body}");
+}

@@ -24,6 +24,9 @@ mod decode;
 mod metrics;
 mod output;
 
+#[cfg(feature = "sweep")]
+mod sweep;
+
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -50,6 +53,12 @@ enum Command {
     /// one invocation. Decodes each unique image once, then runs all
     /// metrics back-to-back per pair.
     Compare(CompareArgs),
+    /// Drive a codec across a (image × q × knob-tuple) Cartesian grid
+    /// and score each encoded variant with one or more metrics. Emits
+    /// a Pareto TSV. Only available when the binary is built with
+    /// `--features sweep`.
+    #[cfg(feature = "sweep")]
+    Sweep(SweepArgs),
     /// Print available metrics and which require a GPU.
     ListMetrics,
     /// Print supported input formats.
@@ -123,6 +132,41 @@ struct CompareArgs {
     jobs: usize,
 }
 
+#[cfg(feature = "sweep")]
+#[derive(Parser, Debug)]
+struct SweepArgs {
+    /// Codec to drive.
+    #[arg(long, value_enum)]
+    codec: crate::sweep::CodecKind,
+    /// Directory of source images. Every file the path-based decoder
+    /// recognises (PNG / WebP / AVIF / JXL / JPEG when enabled) is
+    /// included. Subdirectories are not walked.
+    #[arg(long)]
+    sources: PathBuf,
+    /// Comma-separated list of integer qualities (0..=100). e.g.
+    /// `5,10,15,20,...,95`.
+    #[arg(long)]
+    q_grid: String,
+    /// JSON object `{axis: [values]}` describing the knob Cartesian
+    /// product. See `crates/zen-metrics-cli/src/sweep/encode.rs` for
+    /// the per-codec axis names.
+    #[arg(long, default_value = "")]
+    knob_grid: String,
+    /// One or more metrics to score each cell with. Pass once per
+    /// metric. Defaults to `zensim` if omitted.
+    #[arg(long = "metric", value_enum, action = ArgAction::Append)]
+    metrics: Vec<MetricKind>,
+    /// Output Pareto TSV path.
+    #[arg(long)]
+    output: PathBuf,
+    /// CubeCL runtime selector for GPU metrics.
+    #[arg(long, value_enum, default_value = "auto")]
+    gpu_runtime: GpuRuntime,
+    /// Reserved for future fan-out. Currently serial.
+    #[arg(long, default_value = "1")]
+    jobs: usize,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[allow(dead_code)]
 enum FormatLabel {
@@ -167,6 +211,14 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        #[cfg(feature = "sweep")]
+        Command::Sweep(args) => match cmd_sweep(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Command::ListMetrics => {
             print_metric_list();
             ExitCode::SUCCESS
@@ -176,6 +228,58 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+#[cfg(feature = "sweep")]
+fn cmd_sweep(args: SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::sweep::{SweepConfig, parse_knob_grid, parse_q_grid, run_sweep};
+
+    let q_grid = parse_q_grid(&args.q_grid)?;
+    let knob_grid = parse_knob_grid(&args.knob_grid)?;
+    let mut metrics = args.metrics;
+    if metrics.is_empty() {
+        // Default metric set keeps the binary useful when invoked without
+        // a `--metric` flag. zensim is the cheapest defensible default —
+        // CPU-only, no GPU runtime needed, and already exposed by the
+        // crate.
+        metrics.push(MetricKind::Zensim);
+    }
+
+    // Walk the source directory (no recursion). Every file we can sniff
+    // is included; everything else is skipped silently.
+    let mut sources: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(&args.sources)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.is_file() {
+            sources.push(p);
+        }
+    }
+    sources.sort();
+    if sources.is_empty() {
+        return Err(format!("no source files found in {}", args.sources.display()).into());
+    }
+
+    let cfg = SweepConfig {
+        codec: args.codec,
+        sources,
+        q_grid,
+        knob_grid,
+        metrics,
+        gpu_runtime: args.gpu_runtime,
+        output: args.output,
+    };
+    let stats = run_sweep(&cfg)?;
+    eprintln!(
+        "[sweep] done: {emitted}/{total} cells emitted; \
+         encode-fail={ef} decode-fail={df} score-fail={sf}",
+        emitted = stats.cells_emitted,
+        total = stats.cells_total,
+        ef = stats.cells_failed_encode,
+        df = stats.cells_failed_decode,
+        sf = stats.cells_failed_score,
+    );
+    Ok(())
 }
 
 fn cmd_score(args: ScoreArgs) -> Result<(), Box<dyn std::error::Error>> {

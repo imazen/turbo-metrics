@@ -2,6 +2,38 @@
 
 ## zen-metrics-cli
 
+### [0.3.0] - 2026-05-03
+
+#### Added
+- New `sweep` subcommand and `sweep` cargo feature. Drives a codec
+  (`zenwebp` / `zenavif` / `zenjxl`) across a Cartesian grid of
+  `(image, q, knob_tuple)` cells, encodes each cell via the codec's
+  public + `__expert` APIs, decodes back, and scores against the source
+  with one or more selected metrics. Emits a Pareto TSV with one row
+  per cell. The driver lives entirely outside any codec source tree —
+  codecs stay "dumb" (no in-codec picker glue, no `.bin` shipped
+  alongside the encoder). Replaces the per-codec example sweep
+  harnesses scattered across coefficient and the encoder repos.
+- New `tempfile`, `zencodec`, and `almost-enough` optional dependencies,
+  pulled in by the `sweep` feature.
+- Three integration tests covering sweep on each supported codec at
+  64×64 (`sweep_zenwebp_emits_pareto_rows`, `sweep_zenavif_emits_pareto_rows`,
+  `sweep_zenjxl_emits_pareto_rows`).
+- Six unit tests under `sweep::grid::tests` for q-grid and knob-grid
+  parsing and the canonical-JSON encoding rule that the TSV column
+  uses.
+
+#### Notes
+- `zenjpeg 0.8.3` (the published version) does not yet expose
+  `__expert`; it lands in 0.8.4. The sweep driver does not include
+  zenjpeg in this release. It can be added once 0.8.4 publishes (or
+  via a path override).
+- `zenjxl 0.2.1`'s `JxlEncoderConfig` does not expose
+  `with_internal_params` for the lossy path — the lossy
+  `LossyInternalParams` are reachable via `jxl-encoder` directly but
+  not via the wrapper. For now the sweep only varies zenjxl's public
+  knobs (`effort`, `lossless`, `noise`, optional `distance`).
+
 ### [0.2.0] - 2026-05-03
 
 #### Changed
