@@ -22,7 +22,12 @@ fn list_metrics_runs() {
         String::from_utf8_lossy(&out.stderr)
     );
     let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("ssim2"));
     assert!(s.contains("ssim2-gpu"));
+    assert!(s.contains("butteraugli"));
+    assert!(s.contains("butteraugli-gpu"));
+    assert!(s.contains("dssim"));
+    assert!(s.contains("dssim-gpu"));
     assert!(s.contains("zensim"));
 }
 
@@ -120,6 +125,52 @@ fn score_butteraugli_noisy_is_higher_than_identical() {
         noisy > identical,
         "noisy {noisy} should be > identical {identical}"
     );
+}
+
+#[cfg(feature = "cpu-metrics")]
+#[test]
+fn score_dssim_identical_is_zero() {
+    let dir = fixtures_dir();
+    let s = run_score(
+        "dssim",
+        &dir.join("ref_64.png"),
+        &dir.join("dist_identical_64.png"),
+    );
+    // DSSIM is a distance — identical images should score ~0.
+    assert!(s < 1e-3, "expected ~0 for identical, got {s}");
+}
+
+#[cfg(feature = "cpu-metrics")]
+#[test]
+fn score_dssim_noisy_higher_than_identical() {
+    let dir = fixtures_dir();
+    let identical = run_score(
+        "dssim",
+        &dir.join("ref_64.png"),
+        &dir.join("dist_identical_64.png"),
+    );
+    let noisy = run_score(
+        "dssim",
+        &dir.join("ref_64.png"),
+        &dir.join("dist_noisy_64.png"),
+    );
+    assert!(
+        noisy > identical,
+        "noisy dssim {noisy} should be > identical {identical}"
+    );
+}
+
+#[cfg(all(feature = "cpu-metrics", feature = "gpu-dssim"))]
+#[test]
+fn score_dssim_gpu_identical_is_zero() {
+    let dir = fixtures_dir();
+    let s = run_score(
+        "dssim-gpu",
+        &dir.join("ref_64.png"),
+        &dir.join("dist_identical_64.png"),
+    );
+    // DSSIM-GPU is a distance — identical images should score ~0.
+    assert!(s < 1e-3, "expected ~0 for identical, got {s}");
 }
 
 #[cfg(feature = "cpu-metrics")]

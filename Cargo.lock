@@ -5881,6 +5881,8 @@ dependencies = [
  "clap",
  "csv",
  "cubecl",
+ "dssim-core",
+ "dssim-gpu",
  "enough",
  "imgref",
  "rgb",

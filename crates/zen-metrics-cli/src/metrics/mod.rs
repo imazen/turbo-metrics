@@ -13,15 +13,23 @@ use crate::decode::Rgb8Image;
 #[cfg(feature = "cpu-metrics")]
 mod butteraugli;
 #[cfg(feature = "cpu-metrics")]
+mod dssim;
+#[cfg(feature = "cpu-metrics")]
 mod ssim2;
 #[cfg(feature = "cpu-metrics")]
 mod zensim;
 
-#[cfg(any(feature = "gpu-butteraugli", feature = "gpu-ssim2"))]
+#[cfg(any(
+    feature = "gpu-butteraugli",
+    feature = "gpu-ssim2",
+    feature = "gpu-dssim"
+))]
 mod gpu_runtime_dispatch;
 
 #[cfg(feature = "gpu-butteraugli")]
 mod butteraugli_gpu;
+#[cfg(feature = "gpu-dssim")]
+mod dssim_gpu;
 #[cfg(feature = "gpu-ssim2")]
 mod ssim2_gpu;
 
@@ -40,6 +48,12 @@ pub enum MetricKind {
     /// Butteraugli (3-norm) — GPU implementation via the `butteraugli-gpu` crate.
     #[value(name = "butteraugli-gpu")]
     ButteraugliGpu,
+    /// DSSIM — CPU implementation via the `dssim-core` crate. Distance metric: 0 = identical.
+    #[value(name = "dssim")]
+    Dssim,
+    /// DSSIM — GPU implementation via the `dssim-gpu` crate. Distance metric: 0 = identical.
+    #[value(name = "dssim-gpu")]
+    DssimGpu,
     /// Zensim — CPU implementation via the `zensim` crate.
     #[value(name = "zensim")]
     Zensim,
@@ -52,6 +66,8 @@ impl MetricKind {
             MetricKind::Ssim2Gpu,
             MetricKind::Butteraugli,
             MetricKind::ButteraugliGpu,
+            MetricKind::Dssim,
+            MetricKind::DssimGpu,
             MetricKind::Zensim,
         ]
     }
@@ -62,19 +78,24 @@ impl MetricKind {
             MetricKind::Ssim2Gpu => "ssim2-gpu",
             MetricKind::Butteraugli => "butteraugli",
             MetricKind::ButteraugliGpu => "butteraugli-gpu",
+            MetricKind::Dssim => "dssim",
+            MetricKind::DssimGpu => "dssim-gpu",
             MetricKind::Zensim => "zensim",
         }
     }
 
     pub fn backend(self) -> &'static str {
         match self {
-            MetricKind::Ssim2Gpu | MetricKind::ButteraugliGpu => "GPU",
+            MetricKind::Ssim2Gpu | MetricKind::ButteraugliGpu | MetricKind::DssimGpu => "GPU",
             _ => "CPU",
         }
     }
 
     pub fn requires_gpu(self) -> bool {
-        matches!(self, MetricKind::Ssim2Gpu | MetricKind::ButteraugliGpu)
+        matches!(
+            self,
+            MetricKind::Ssim2Gpu | MetricKind::ButteraugliGpu | MetricKind::DssimGpu
+        )
     }
 
     pub fn column_name(self) -> &'static str {
@@ -84,6 +105,8 @@ impl MetricKind {
             MetricKind::Ssim2Gpu => "ssim2_gpu",
             MetricKind::Butteraugli => "butteraugli",
             MetricKind::ButteraugliGpu => "butteraugli_gpu",
+            MetricKind::Dssim => "dssim",
+            MetricKind::DssimGpu => "dssim_gpu",
             MetricKind::Zensim => "zensim",
         }
     }
@@ -111,7 +134,11 @@ pub fn run_metric(
     reference: &Rgb8Image,
     distorted: &Rgb8Image,
     #[cfg_attr(
-        not(any(feature = "gpu-butteraugli", feature = "gpu-ssim2")),
+        not(any(
+            feature = "gpu-butteraugli",
+            feature = "gpu-ssim2",
+            feature = "gpu-dssim"
+        )),
         allow(unused_variables)
     )]
     gpu_runtime: GpuRuntime,
@@ -136,6 +163,16 @@ pub fn run_metric(
         MetricKind::ButteraugliGpu => butteraugli_gpu::score(reference, distorted, gpu_runtime),
         #[cfg(not(feature = "gpu-butteraugli"))]
         MetricKind::ButteraugliGpu => Err(disabled_msg("butteraugli-gpu", "gpu-butteraugli")),
+
+        #[cfg(feature = "cpu-metrics")]
+        MetricKind::Dssim => dssim::score(reference, distorted),
+        #[cfg(not(feature = "cpu-metrics"))]
+        MetricKind::Dssim => Err(disabled_msg("dssim", "cpu-metrics")),
+
+        #[cfg(feature = "gpu-dssim")]
+        MetricKind::DssimGpu => dssim_gpu::score(reference, distorted, gpu_runtime),
+        #[cfg(not(feature = "gpu-dssim"))]
+        MetricKind::DssimGpu => Err(disabled_msg("dssim-gpu", "gpu-dssim")),
 
         #[cfg(feature = "cpu-metrics")]
         MetricKind::Zensim => zensim::score(reference, distorted),
