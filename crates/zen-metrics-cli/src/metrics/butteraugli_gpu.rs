@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
 //! GPU butteraugli score via the `butteraugli-gpu` crate. Returns the
-//! max-norm score; `pnorm_3` is dropped to keep the CLI's metric API a
-//! single scalar.
+//! libjxl-style **3-norm** aggregation (`GpuButteraugliResult::pnorm_3`),
+//! matching the CPU `butteraugli` crate's `pnorm_3` output and
+//! `butteraugli_main --pnorm`. The max-norm `score` field is dropped to
+//! keep the CLI's metric API a single scalar.
 
 use cubecl::Runtime;
 
@@ -94,9 +96,9 @@ fn run<R: Runtime>(
     let mut b =
         butteraugli_gpu::Butteraugli::<R>::new_multires(client, reference.width, reference.height);
     let result = b.compute(&reference.pixels, &distorted.pixels);
-    let score = result.score as f64;
+    let score = result.pnorm_3 as f64;
     if !score.is_finite() {
-        return Err(format!("butteraugli-gpu produced non-finite score: {score}").into());
+        return Err(format!("butteraugli-gpu produced non-finite pnorm_3: {score}").into());
     }
     Ok(score)
 }

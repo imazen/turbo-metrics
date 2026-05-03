@@ -2,8 +2,9 @@
 
 //! CPU butteraugli score via the `butteraugli` crate.
 //!
-//! Returns the max-norm score (`ButteraugliResult::score`). Lower is better:
-//! < 1.0 is "good", > 2.0 is "bad". Mirrors libjxl's default scoring.
+//! Returns the libjxl-style **3-norm** aggregation
+//! (`ButteraugliResult::pnorm_3`), matching `butteraugli_main --pnorm` and
+//! the Cloudinary CID22 paper. Lower is better.
 
 use crate::decode::Rgb8Image;
 
@@ -25,5 +26,5 @@ pub fn score(
     let params = butteraugli::ButteraugliParams::new();
     let result =
         butteraugli::butteraugli(img1, img2, &params).map_err(|e| format!("butteraugli: {e}"))?;
-    Ok(result.score)
+    Ok(result.pnorm_3)
 }
