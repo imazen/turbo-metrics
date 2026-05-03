@@ -8,16 +8,27 @@
 //! per-metric scripts. Format support and metrics are gated behind cargo
 //! features; see `Cargo.toml` for the feature matrix.
 //!
-//! See `--help` for the available subcommands.
+//! Subcommands at a glance:
+//! - `score` — one (reference, distorted) pair, one metric.
+//! - `batch` — N rows from a TSV, one metric, output TSV with a score column.
+//! - `compare` — M references × N variants × K metrics in one invocation,
+//!   with each unique image decoded only once. Use this when you have one
+//!   reference and several encoded variants you want scored across multiple
+//!   metrics for picker / RD-curve work.
+//! - `list-metrics` / `list-formats` — environment introspection.
+//!
+//! See `--help` on any subcommand for full options.
 
+mod compare;
 mod decode;
 mod metrics;
 mod output;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use crate::compare::{print_report, run_compare};
 use crate::metrics::{GpuRuntime, MetricKind, run_metric};
 use crate::output::{OutputFormat, print_score};
 
@@ -35,6 +46,10 @@ enum Command {
     Score(ScoreArgs),
     /// Run a metric over a TSV of image pairs.
     Batch(BatchArgs),
+    /// Score every (reference, variant) pair across multiple metrics in
+    /// one invocation. Decodes each unique image once, then runs all
+    /// metrics back-to-back per pair.
+    Compare(CompareArgs),
     /// Print available metrics and which require a GPU.
     ListMetrics,
     /// Print supported input formats.
@@ -81,6 +96,33 @@ struct BatchArgs {
     jobs: usize,
 }
 
+#[derive(Parser, Debug)]
+struct CompareArgs {
+    /// Reference image. Pass once per reference: `--reference a.png --reference b.png`.
+    /// Every reference is paired with every `--variant`.
+    #[arg(long = "reference", action = ArgAction::Append, required = true)]
+    references: Vec<PathBuf>,
+    /// Variant image. Pass once per variant. Every variant is scored
+    /// against every `--reference`.
+    #[arg(long = "variant", action = ArgAction::Append, required = true)]
+    variants: Vec<PathBuf>,
+    /// Metric to evaluate. Pass once per metric — every metric is run on
+    /// every (reference, variant) pair.
+    #[arg(long = "metric", value_enum, action = ArgAction::Append, required = true)]
+    metrics: Vec<MetricKind>,
+    /// CubeCL runtime selection for GPU metrics.
+    #[arg(long, value_enum, default_value = "auto")]
+    gpu_runtime: GpuRuntime,
+    /// Output format. Plain is the default human-readable layout; JSON
+    /// emits a structured object with `metrics` + `results`; TSV gives a
+    /// flat table with one row per pair and one column per metric.
+    #[arg(long, value_enum, default_value = "plain")]
+    output: OutputFormat,
+    /// Reserved for CPU parallelism. Currently serial — see `batch`.
+    #[arg(long, default_value = "1")]
+    jobs: usize,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[allow(dead_code)]
 enum FormatLabel {
@@ -104,6 +146,22 @@ fn main() -> ExitCode {
         },
         Command::Batch(args) => match cmd_batch(args) {
             Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Compare(args) => match cmd_compare(args) {
+            Ok(success) => {
+                if success {
+                    ExitCode::SUCCESS
+                } else {
+                    // Some cells produced errors. Output is still complete
+                    // and rendered, but signal a non-zero exit so callers
+                    // (CI / driver scripts) can detect partial failures.
+                    ExitCode::FAILURE
+                }
+            }
             Err(e) => {
                 eprintln!("error: {e}");
                 ExitCode::FAILURE
@@ -181,6 +239,31 @@ fn cmd_batch(args: BatchArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     wtr.flush()?;
     Ok(())
+}
+
+/// Returns `Ok(true)` when every cell succeeded and `Ok(false)` when at
+/// least one cell failed (the report is still rendered in full). `Err` is
+/// reserved for setup failures that prevent any output (currently: empty
+/// argument lists, which clap also enforces via `required = true`).
+fn cmd_compare(args: CompareArgs) -> Result<bool, Box<dyn std::error::Error>> {
+    if args.references.is_empty() {
+        return Err("at least one --reference is required".into());
+    }
+    if args.variants.is_empty() {
+        return Err("at least one --variant is required".into());
+    }
+    if args.metrics.is_empty() {
+        return Err("at least one --metric is required".into());
+    }
+    let report = run_compare(
+        &args.references,
+        &args.variants,
+        &args.metrics,
+        args.gpu_runtime,
+        args.jobs,
+    );
+    print_report(args.output, &args.metrics, &report)?;
+    Ok(!report.had_failures)
 }
 
 fn find_col(headers: &csv::StringRecord, names: &[&str]) -> Result<usize, String> {

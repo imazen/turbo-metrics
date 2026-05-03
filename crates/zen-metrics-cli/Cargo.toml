@@ -56,7 +56,9 @@ gpu-cpu = ["butteraugli-gpu?/cpu", "ssim2-gpu?/cpu", "cubecl?/cpu"]
 [dependencies]
 clap = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+# `preserve_order` keeps the JSON `compare` output in the order we insert
+# keys (reference → variant → scores), matching the documented schema.
+serde_json = { workspace = true, features = ["preserve_order"] }
 csv = { workspace = true }
 
 # zen image decoders

@@ -227,6 +227,155 @@ fn batch_zensim_appends_metric_column() {
 }
 
 #[cfg(feature = "cpu-metrics")]
+#[test]
+fn compare_one_ref_one_variant_one_metric_json_shape() {
+    // Smallest possible compare: 1×1×1. Verify the JSON document shape
+    // matches the spec — a top-level `metrics` array and a `results` array
+    // where each row carries `reference`, `variant`, and a `scores` map
+    // keyed on metric names.
+    let dir = fixtures_dir();
+    let out = cli()
+        .args([
+            "compare",
+            "--reference",
+            dir.join("ref_64.png").to_str().unwrap(),
+            "--variant",
+            dir.join("dist_identical_64.png").to_str().unwrap(),
+            "--metric",
+            "zensim",
+            "--output",
+            "json",
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(s.trim()).expect("json");
+    let metrics = v["metrics"].as_array().expect("metrics array");
+    assert_eq!(metrics.len(), 1);
+    assert_eq!(metrics[0], "zensim");
+    let results = v["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 1);
+    let row = &results[0];
+    assert!(row["reference"].as_str().unwrap().ends_with("ref_64.png"));
+    assert!(
+        row["variant"]
+            .as_str()
+            .unwrap()
+            .ends_with("dist_identical_64.png")
+    );
+    let score = row["scores"]["zensim"].as_f64().expect("score");
+    assert!(score > 95.0, "expected ~100 for identical, got {score}");
+}
+
+#[cfg(feature = "cpu-metrics")]
+#[test]
+fn compare_one_ref_two_variants_two_metrics_tsv() {
+    // 1×2 × 2 = 4 cells. Verify all four scores show up in the TSV with
+    // the correct column ordering, that all values are finite, and that
+    // the "noisy" variant scores differ from the "identical" one.
+    let dir = fixtures_dir();
+    let out = cli()
+        .args([
+            "compare",
+            "--reference",
+            dir.join("ref_64.png").to_str().unwrap(),
+            "--variant",
+            dir.join("dist_identical_64.png").to_str().unwrap(),
+            "--variant",
+            dir.join("dist_noisy_64.png").to_str().unwrap(),
+            "--metric",
+            "zensim",
+            "--metric",
+            "dssim-cpu",
+            "--output",
+            "tsv",
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut lines = s.lines();
+    let header = lines.next().expect("header");
+    assert_eq!(header, "reference\tvariant\tzensim\tdssim-cpu");
+    let row1: Vec<&str> = lines.next().expect("row1").split('\t').collect();
+    let row2: Vec<&str> = lines.next().expect("row2").split('\t').collect();
+    assert!(lines.next().is_none(), "exactly two data rows expected");
+    assert_eq!(row1.len(), 4);
+    assert_eq!(row2.len(), 4);
+    let identical_zensim: f64 = row1[2].parse().unwrap();
+    let identical_dssim: f64 = row1[3].parse().unwrap();
+    let noisy_zensim: f64 = row2[2].parse().unwrap();
+    let noisy_dssim: f64 = row2[3].parse().unwrap();
+    assert!(identical_zensim > 95.0, "{identical_zensim}");
+    assert!(identical_dssim < 0.001, "{identical_dssim}");
+    assert!(
+        noisy_zensim < identical_zensim,
+        "noisy {noisy_zensim} should be < identical {identical_zensim}"
+    );
+    assert!(
+        noisy_dssim > identical_dssim,
+        "noisy {noisy_dssim} (DSSIM, higher = worse) should be > identical {identical_dssim}"
+    );
+}
+
+#[cfg(feature = "cpu-metrics")]
+#[test]
+fn compare_continues_on_per_cell_failure() {
+    // Two variants: one valid, one that does not exist on disk. The bad
+    // variant should produce error cells (null in JSON) for every metric
+    // it's paired with, but the good variant should still get scored.
+    // Process exit must be non-zero because at least one cell failed.
+    let dir = fixtures_dir();
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let bogus = tmp.path().join("does_not_exist.png");
+    let out = cli()
+        .args([
+            "compare",
+            "--reference",
+            dir.join("ref_64.png").to_str().unwrap(),
+            "--variant",
+            dir.join("dist_identical_64.png").to_str().unwrap(),
+            "--variant",
+            bogus.to_str().unwrap(),
+            "--metric",
+            "zensim",
+            "--output",
+            "json",
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit when a cell fails"
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(s.trim()).expect("json");
+    let results = v["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+    // First row (identical variant) should have a real score.
+    let good_score = results[0]["scores"]["zensim"].as_f64().expect("good score");
+    assert!(
+        good_score > 95.0,
+        "good score should be ~100, got {good_score}"
+    );
+    // Second row (missing variant) should be null.
+    assert!(
+        results[1]["scores"]["zensim"].is_null(),
+        "expected null score for missing variant, got {}",
+        results[1]["scores"]["zensim"]
+    );
+}
+
+#[cfg(feature = "cpu-metrics")]
 fn run_score(metric: &str, reference: &std::path::Path, distorted: &std::path::Path) -> f64 {
     let out = cli()
         .args([
