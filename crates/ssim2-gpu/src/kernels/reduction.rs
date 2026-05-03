@@ -51,11 +51,7 @@ mod fast {
     use super::*;
 
     #[cube(launch_unchecked)]
-    fn fused_sum_p4_kernel(
-        plane: &Array<f32>,
-        output_sums: &mut Array<Atomic<f32>>,
-        slot: u32,
-    ) {
+    fn fused_sum_p4_kernel(plane: &Array<f32>, output_sums: &mut Array<Atomic<f32>>, slot: u32) {
         let tid = ABSOLUTE_POS;
         let stride = CUBE_COUNT * (CUBE_DIM_X as usize);
         let n = plane.len();
@@ -231,11 +227,7 @@ mod portable {
     const THREADS_PER_REDUCTION_U32: u32 = NUM_BLOCKS * BLOCK_SIZE;
 
     #[cube(launch_unchecked)]
-    fn thread_sum_p4_kernel(
-        plane: &Array<f32>,
-        output: &mut Array<f32>,
-        slot_offset: u32,
-    ) {
+    fn thread_sum_p4_kernel(plane: &Array<f32>, output: &mut Array<f32>, slot_offset: u32) {
         let tid = ABSOLUTE_POS;
         let stride = CUBE_COUNT * (CUBE_DIM_X as usize);
         let n = plane.len();
@@ -427,9 +419,7 @@ mod portable {
 }
 
 #[cfg(feature = "fast-reduction")]
-pub use fast::{
-    launch_finalize, launch_finalize_batched, launch_sum_p4, launch_sum_p4_batched,
-};
+pub use fast::{launch_finalize, launch_finalize_batched, launch_sum_p4, launch_sum_p4_batched};
 
 #[cfg(not(feature = "fast-reduction"))]
 pub use portable::{

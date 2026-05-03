@@ -47,7 +47,13 @@ fn load_rgb8(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
 fn srgb_u8_to_xyb(bytes: &[u8], w: usize, h: usize) -> Xyb {
     let pixels: Vec<[f32; 3]> = bytes
         .chunks_exact(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
     Xyb::try_from(
         Rgb::new(
@@ -82,7 +88,11 @@ fn synthetic_pair(width: usize, height: usize, mag: u8) -> (Vec<u8>, Vec<u8>) {
             a[i + 2] = bb;
             let bx = x / 8;
             let by = y / 8;
-            let pert = if (bx ^ by) & 1 == 0 { mag as i32 } else { -(mag as i32) };
+            let pert = if (bx ^ by) & 1 == 0 {
+                mag as i32
+            } else {
+                -(mag as i32)
+            };
             b[i] = (r as i32 + pert).clamp(0, 255) as u8;
             b[i + 1] = (g as i32 + pert).clamp(0, 255) as u8;
             b[i + 2] = (bb as i32 + pert).clamp(0, 255) as u8;
@@ -161,7 +171,10 @@ fn cached_reference_matches_direct() {
     for q in [5u32, 45, 90] {
         let path = dir.join(format!("q{q}.jpg"));
         let (dis_bytes, _, _) = load_rgb8(&path);
-        let direct = s_direct.compute(&src_bytes, &dis_bytes).expect("direct").score;
+        let direct = s_direct
+            .compute(&src_bytes, &dis_bytes)
+            .expect("direct")
+            .score;
         let cached = s_cached
             .compute_with_reference(&dis_bytes)
             .expect("cached")
@@ -225,7 +238,11 @@ fn batch_partial_fill() {
     let s0 = results[0].score;
     for r in &results[1..] {
         let d = (r.score - s0).abs();
-        assert!(d < 1e-4, "partial-batch slots disagree: {s0} vs {}", r.score);
+        assert!(
+            d < 1e-4,
+            "partial-batch slots disagree: {s0} vs {}",
+            r.score
+        );
     }
 }
 
@@ -381,7 +398,9 @@ fn clear_reference_then_set_again() {
     // Re-arm.
     s.set_reference(&src_bytes).expect("second set");
     assert!(s.has_cached_reference());
-    let r = s.compute_with_reference(&dis).expect("compute after re-set");
+    let r = s
+        .compute_with_reference(&dis)
+        .expect("compute after re-set");
     // Score should be a sane value, not 0/inf.
     assert!(r.score.is_finite());
     assert!(r.score > -1000.0 && r.score < 200.0, "score = {}", r.score);

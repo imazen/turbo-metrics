@@ -11,12 +11,7 @@ use cubecl::prelude::*;
 /// Transpose `src` (`width × height`, row-major) into `dst`
 /// (`height × width`, row-major). Each thread handles one output pixel.
 #[cube(launch_unchecked)]
-pub fn transpose_kernel(
-    src: &Array<f32>,
-    dst: &mut Array<f32>,
-    width: u32,
-    height: u32,
-) {
+pub fn transpose_kernel(src: &Array<f32>, dst: &mut Array<f32>, width: u32, height: u32) {
     let idx = ABSOLUTE_POS;
     let total = (width * height) as usize;
     if idx >= total {

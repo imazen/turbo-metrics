@@ -76,8 +76,8 @@ fn run(qs_per_call: usize) {
 
     // Batched path.
     let client = Backend::client(&Default::default());
-    let mut batch = Ssim2Batch::<Backend>::new(client, w, h, qs_per_call as u32)
-        .expect("Ssim2Batch::new");
+    let mut batch =
+        Ssim2Batch::<Backend>::new(client, w, h, qs_per_call as u32).expect("Ssim2Batch::new");
     batch.set_reference(&src_bytes).expect("set_reference");
     // Warmup.
     let _ = batch.compute_batch(&dis).expect("compute_batch");

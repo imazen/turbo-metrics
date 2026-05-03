@@ -59,7 +59,11 @@ fn alloc_plane<R: Runtime>(client: &ComputeClient<R>, n: usize) -> cubecl::serve
     client.create_from_slice(f32::as_bytes(&vec![0.0_f32; n]))
 }
 fn alloc_3<R: Runtime>(client: &ComputeClient<R>, n: usize) -> [cubecl::server::Handle; 3] {
-    [alloc_plane(client, n), alloc_plane(client, n), alloc_plane(client, n)]
+    [
+        alloc_plane(client, n),
+        alloc_plane(client, n),
+        alloc_plane(client, n),
+    ]
 }
 
 impl BatchScale {
@@ -147,12 +151,7 @@ impl<R: Runtime> Ssim2Batch<R> {
     /// assert_eq!(b.dimensions(), (256, 256));
     /// # Ok::<(), ssim2_gpu::Error>(())
     /// ```
-    pub fn new(
-        client: ComputeClient<R>,
-        width: u32,
-        height: u32,
-        batch_size: u32,
-    ) -> Result<Self> {
+    pub fn new(client: ComputeClient<R>, width: u32, height: u32, batch_size: u32) -> Result<Self> {
         if batch_size == 0 {
             return Err(Error::InvalidBatchSize { got: 0, max: 0 });
         }
@@ -169,17 +168,20 @@ impl<R: Runtime> Ssim2Batch<R> {
         // sRGB bytes are uploaded widened to u32 — wgpu's WGSL backend
         // has no u8 storage type, so we keep all platforms on a u32
         // path (CUDA happily handles either).
-        let src_u8_batch = client.create_from_slice(u32::as_bytes(&vec![
-            0_u32;
-            n_full * 3 * (batch_size as usize)
-        ]));
+        let src_u8_batch =
+            client.create_from_slice(u32::as_bytes(&vec![
+                0_u32;
+                n_full * 3 * (batch_size as usize)
+            ]));
         let partials = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
-            PARTIALS_PER_IMAGE_FLOATS * (batch_size as usize)
+            PARTIALS_PER_IMAGE_FLOATS
+                * (batch_size as usize)
         ]));
         let sums = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
-            STATS_PER_IMAGE_FLOATS * (batch_size as usize)
+            STATS_PER_IMAGE_FLOATS
+                * (batch_size as usize)
         ]));
 
         Ok(Self {
@@ -317,10 +319,7 @@ impl<R: Runtime> Ssim2Batch<R> {
                             self.bscales[s - 1].dis_lin[ch].clone(),
                             prev.n * (self.batch_size as usize),
                         ),
-                        ArrayArg::from_raw_parts(
-                            self.bscales[s].dis_lin[ch].clone(),
-                            n_curr_total,
-                        ),
+                        ArrayArg::from_raw_parts(self.bscales[s].dis_lin[ch].clone(), n_curr_total),
                         prev_w,
                         prev_h,
                         curr_w,
@@ -353,18 +352,24 @@ impl<R: Runtime> Ssim2Batch<R> {
             .read_one(self.sums.clone())
             .expect("read batched sums");
         let raw = f32::from_bytes(&bytes);
-        debug_assert_eq!(raw.len(), STATS_PER_IMAGE_FLOATS * (self.batch_size as usize));
+        debug_assert_eq!(
+            raw.len(),
+            STATS_PER_IMAGE_FLOATS * (self.batch_size as usize)
+        );
 
         // Reset both buffers for the next call. partials is the
         // atomic-add target in fast mode (needs zeroing); sums is the
         // finalizer's output (overwritten anyway, reset for safety).
         self.partials = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
-            PARTIALS_PER_IMAGE_FLOATS * (self.batch_size as usize)
+            PARTIALS_PER_IMAGE_FLOATS
+                * (self.batch_size
+                    as usize)
         ]));
         self.sums = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
-            STATS_PER_IMAGE_FLOATS * (self.batch_size as usize)
+            STATS_PER_IMAGE_FLOATS
+                * (self.batch_size as usize)
         ]));
 
         let mut results = Vec::with_capacity(n_in);
@@ -447,12 +452,7 @@ impl<R: Runtime> Ssim2Batch<R> {
                 bs.sigma12_in[ch].clone(),
                 bs.sigma12_full[ch].clone(),
             );
-            self.blur_batched_two_pass(
-                s,
-                ch,
-                bs.dis_xyb[ch].clone(),
-                bs.mu2_full[ch].clone(),
-            );
+            self.blur_batched_two_pass(s, ch, bs.dis_xyb[ch].clone(), bs.mu2_full[ch].clone());
         }
 
         // 5. Transpose raw dis_xyb → dis_xyb_t (so error_maps reads
@@ -585,9 +585,8 @@ impl<R: Runtime> Ssim2Batch<R> {
         let mut avg_ssim = vec![[0.0_f64; 6]; NUM_SCALES];
         let mut avg_edgediff = vec![[0.0_f64; 12]; NUM_SCALES];
 
-        let fold_slot = |slot: usize| -> (f64, f64) {
-            (block[slot * 2] as f64, block[slot * 2 + 1] as f64)
-        };
+        let fold_slot =
+            |slot: usize| -> (f64, f64) { (block[slot * 2] as f64, block[slot * 2 + 1] as f64) };
 
         for s in 0..self.bscales.len() {
             let n_pix = self.bscales[s].n as f64;

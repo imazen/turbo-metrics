@@ -18,7 +18,13 @@ fn srgb_u8_to_xyb(bytes: &[u8], width: usize, height: usize) -> Xyb {
     // matching the CPU test's `image::open(...).to_rgb32f()` flow.
     let pixels: Vec<[f32; 3]> = bytes
         .chunks_exact(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
     Xyb::try_from(
         Rgb::new(
@@ -56,7 +62,11 @@ fn build_pair(width: usize, height: usize, mag: u8, seed: u32) -> (Vec<u8>, Vec<
             // JPEG-style blocking.
             let bx = x / 8;
             let by = y / 8;
-            let pert = if (bx ^ by) & 1 == 0 { mag as i32 } else { -(mag as i32) };
+            let pert = if (bx ^ by) & 1 == 0 {
+                mag as i32
+            } else {
+                -(mag as i32)
+            };
             b[i] = (r as i32 + pert).clamp(0, 255) as u8;
             b[i + 1] = (g as i32 + pert).clamp(0, 255) as u8;
             b[i + 2] = (bb as i32 + pert).clamp(0, 255) as u8;
@@ -85,7 +95,11 @@ fn main() {
         let cpu = cpu_score(&a, &b, width, height);
         let gpu = s.compute(&a, &b).expect("gpu compute").score;
         let delta = (gpu - cpu).abs();
-        let rel = if cpu.abs() > 1e-3 { delta / cpu.abs() } else { delta };
+        let rel = if cpu.abs() > 1e-3 {
+            delta / cpu.abs()
+        } else {
+            delta
+        };
         let ok = if mag == 0 {
             (gpu - 100.0).abs() < 0.1
         } else {

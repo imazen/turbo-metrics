@@ -66,12 +66,7 @@ const TWO_N: u32 = 2 * RADIUS_U32;
 /// `src` and `dst` are single-plane f32 of length `width × height`,
 /// row-major. Coefficients come from `consts` (build.rs).
 #[cube(launch_unchecked)]
-pub fn blur_pass_kernel(
-    src: &Array<f32>,
-    dst: &mut Array<f32>,
-    width: u32,
-    height: u32,
-) {
+pub fn blur_pass_kernel(src: &Array<f32>, dst: &mut Array<f32>, width: u32, height: u32) {
     // x = absolute column index across the launch grid.
     let x = ABSOLUTE_POS;
     if x >= width as usize {

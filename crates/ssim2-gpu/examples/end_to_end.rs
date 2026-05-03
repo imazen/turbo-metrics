@@ -29,7 +29,11 @@ fn build_pair(width: u32, height: u32, mag: u8) -> (Vec<u8>, Vec<u8>) {
             // Distorted: 8×8 block-aligned ring + magnitude offset.
             let bx = x / 8;
             let by = y / 8;
-            let pert = if (bx ^ by) & 1 == 0 { mag as i32 } else { -(mag as i32) };
+            let pert = if (bx ^ by) & 1 == 0 {
+                mag as i32
+            } else {
+                -(mag as i32)
+            };
             b[i] = (r as i32 + pert).clamp(0, 255) as u8;
             b[i + 1] = (g as i32 + pert).clamp(0, 255) as u8;
             b[i + 2] = (bb as i32 + pert).clamp(0, 255) as u8;

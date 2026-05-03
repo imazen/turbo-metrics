@@ -41,7 +41,10 @@ fn main() {
         let path = dir.join(format!("q{q}.jpg"));
         let (dis_bytes, _, _) = load_rgb8(path.to_str().unwrap());
 
-        let direct = s_direct.compute(&src_bytes, &dis_bytes).expect("direct").score;
+        let direct = s_direct
+            .compute(&src_bytes, &dis_bytes)
+            .expect("direct")
+            .score;
         let cached = s_cached
             .compute_with_reference(&dis_bytes)
             .expect("cached")
@@ -56,5 +59,8 @@ fn main() {
         println!("FAIL: max drift {max_d:.6} > 1e-4");
         std::process::exit(1);
     }
-    println!("Cached-reference path matches direct path (max Δ {:.3e}).", max_d);
+    println!(
+        "Cached-reference path matches direct path (max Δ {:.3e}).",
+        max_d
+    );
 }

@@ -53,15 +53,9 @@ fn main() {
         if d > max_d {
             max_d = d;
         }
-        println!(
-            "{:>4}  {:>10.4}  {:>10.4}  {:>9.6}",
-            qs[i], s, b.score, d
-        );
+        println!("{:>4}  {:>10.4}  {:>10.4}  {:>9.6}", qs[i], s, b.score, d);
     }
     println!("Ssim2Batch ↔ Ssim2 max drift: {max_d:.3e}");
-    assert!(
-        max_d < 1e-4,
-        "batch and single paths disagree by {max_d}"
-    );
+    assert!(max_d < 1e-4, "batch and single paths disagree by {max_d}");
     println!("Ssim2Batch smoke test passed for {} images.", dis.len());
 }

@@ -342,10 +342,8 @@ mod portable {
         n_pixels: usize,
     ) -> crate::GpuButteraugliResult {
         let max_bits_handle = client.create_from_slice(u32::as_bytes(&[0_u32]));
-        let partials_handle = client.create_from_slice(f32::as_bytes(&vec![
-            0.0_f32;
-            THREADS_PER_REDUCTION * 3
-        ]));
+        let partials_handle =
+            client.create_from_slice(f32::as_bytes(&vec![0.0_f32; THREADS_PER_REDUCTION * 3]));
         let sums_handle = client.create_from_slice(f32::as_bytes(&[0.0_f32; 3]));
 
         let cube_count = CubeCount::Static(BLOCKS, 1, 1);
@@ -384,7 +382,8 @@ mod portable {
         let partials_handle = client.create_from_slice(f32::as_bytes(&vec![
             0.0_f32;
             threads_per_image
-                * (batch_size as usize)
+                * (batch_size
+                    as usize)
                 * 3
         ]));
         let sums_handle =

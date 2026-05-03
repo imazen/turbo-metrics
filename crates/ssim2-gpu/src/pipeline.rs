@@ -651,14 +651,18 @@ impl<R: Runtime> Ssim2<R> {
         if is_a {
             for ch in 0..3 {
                 self.blur_plane_two_pass(
-                    w, h, n,
+                    w,
+                    h,
+                    n,
                     &s.sigma11_in[ch],
                     &s.sigma11_v[ch],
                     &s.sigma11_t[ch],
                     &s.sigma11_full[ch],
                 );
                 self.blur_plane_two_pass(
-                    w, h, n,
+                    w,
+                    h,
+                    n,
                     &s.ref_xyb[ch],
                     &s.mu1_v[ch],
                     &s.mu1_t[ch],
@@ -668,14 +672,18 @@ impl<R: Runtime> Ssim2<R> {
         } else {
             for ch in 0..3 {
                 self.blur_plane_two_pass(
-                    w, h, n,
+                    w,
+                    h,
+                    n,
                     &s.sigma22_in[ch],
                     &s.sigma22_v[ch],
                     &s.sigma22_t[ch],
                     &s.sigma22_full[ch],
                 );
                 self.blur_plane_two_pass(
-                    w, h, n,
+                    w,
+                    h,
+                    n,
                     &s.dis_xyb[ch],
                     &s.mu2_v[ch],
                     &s.mu2_t[ch],
@@ -695,21 +703,27 @@ impl<R: Runtime> Ssim2<R> {
         let h = s.height;
         for ch in 0..3 {
             self.blur_plane_two_pass(
-                w, h, n,
+                w,
+                h,
+                n,
                 &s.sigma22_in[ch],
                 &s.sigma22_v[ch],
                 &s.sigma22_t[ch],
                 &s.sigma22_full[ch],
             );
             self.blur_plane_two_pass(
-                w, h, n,
+                w,
+                h,
+                n,
                 &s.dis_xyb[ch],
                 &s.mu2_v[ch],
                 &s.mu2_t[ch],
                 &s.mu2_full[ch],
             );
             self.blur_plane_two_pass(
-                w, h, n,
+                w,
+                h,
+                n,
                 &s.sigma12_in[ch],
                 &s.sigma12_v[ch],
                 &s.sigma12_t[ch],
@@ -725,7 +739,9 @@ impl<R: Runtime> Ssim2<R> {
         let s = &self.scales[scale];
         for ch in 0..3 {
             self.blur_plane_two_pass(
-                s.width, s.height, s.n,
+                s.width,
+                s.height,
+                s.n,
                 &s.sigma12_in[ch],
                 &s.sigma12_v[ch],
                 &s.sigma12_t[ch],
@@ -844,17 +860,16 @@ impl<R: Runtime> Ssim2<R> {
         let mut avg_ssim = vec![[0.0_f64; 6]; NUM_SCALES]; // [scale][c*2 + n]
         let mut avg_edgediff = vec![[0.0_f64; 12]; NUM_SCALES]; // [scale][c*4 + n]
 
-        let fold_slot = |slot: usize| -> (f64, f64) {
-            (raw[slot * 2] as f64, raw[slot * 2 + 1] as f64)
-        };
+        let fold_slot =
+            |slot: usize| -> (f64, f64) { (raw[slot * 2] as f64, raw[slot * 2 + 1] as f64) };
 
         for scale in 0..self.scales.len() {
             let n_pix = self.scales[scale].n as f64;
             let one_per_pixels = 1.0 / n_pix;
             for ch in 0..3 {
                 let s_slot = (scale * 3 + ch) * 3; // ssim
-                let a_slot = s_slot + 1;           // artifact
-                let d_slot = s_slot + 2;           // detail
+                let a_slot = s_slot + 1; // artifact
+                let d_slot = s_slot + 2; // detail
                 let (s_sum, s_p4) = fold_slot(s_slot);
                 let (a_sum, a_p4) = fold_slot(a_slot);
                 let (d_sum, d_p4) = fold_slot(d_slot);
@@ -891,7 +906,11 @@ pub fn pointwise_mul_kernel(a: &Array<f32>, b: &Array<f32>, out: &mut Array<f32>
 /// scales, missing entries are treated as 0 (matches the CPU which
 /// `break`s the per-scale loop early but still iterates all 6 weight
 /// rows; slots beyond `n_scales` stay at their `0.0` default).
-pub(crate) fn score_from_stats(avg_ssim: &[[f64; 6]], avg_edgediff: &[[f64; 12]], n_scales: usize) -> f64 {
+pub(crate) fn score_from_stats(
+    avg_ssim: &[[f64; 6]],
+    avg_edgediff: &[[f64; 12]],
+    n_scales: usize,
+) -> f64 {
     const WEIGHT: [f64; 108] = [
         0.0,
         0.000_737_660_670_740_658_6,
@@ -1040,9 +1059,7 @@ pub(crate) fn score_from_stats(avg_ssim: &[[f64; 6]], avg_edgediff: &[[f64; 12]]
     );
 
     if ssim > 0.0 {
-        ssim = ssim
-            .powf(0.627_633_646_783_138_7)
-            .mul_add(-10.0, 100.0)
+        ssim = ssim.powf(0.627_633_646_783_138_7).mul_add(-10.0, 100.0)
     } else {
         ssim = 100.0;
     }

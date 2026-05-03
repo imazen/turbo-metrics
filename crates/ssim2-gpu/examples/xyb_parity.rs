@@ -91,7 +91,11 @@ fn main() {
         let got = [xs[i], ys[i], bs[i]];
         for c in 0..3 {
             let a = (got[c] - exp[c]).abs();
-            let rel = if exp[c].abs() > 1e-6 { a / exp[c].abs() } else { 0.0 };
+            let rel = if exp[c].abs() > 1e-6 {
+                a / exp[c].abs()
+            } else {
+                0.0
+            };
             if a > max_abs {
                 max_abs = a;
             }
