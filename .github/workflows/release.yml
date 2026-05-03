@@ -142,7 +142,7 @@ jobs:
           if [[ -n "${{ matrix.features }}" ]]; then
             FEATURES_ARG="--features ${{ matrix.features }}"
           fi
-          cargo build --release --target ${{ matrix.target }} --bin "${BIN_NAME}" $FEATURES_ARG
+          cargo build --release --target ${{ matrix.target }} -p zen-metrics-cli --bin "${BIN_NAME}" $FEATURES_ARG
 
       - name: Strip binary (Linux/macOS)
         if: runner.os != 'Windows'
@@ -237,7 +237,7 @@ jobs:
           set -euo pipefail
           # If the bin doesn't accept --features cuda the job will fail
           # and continue-on-error keeps the release going.
-          cargo build --release --bin "${BIN_NAME}" --features "${CUDA_FEATURES}"
+          cargo build --release -p zen-metrics-cli --bin "${BIN_NAME}" --features "${CUDA_FEATURES}"
 
       - name: Strip binary
         run: strip "target/release/${BIN_NAME}" || true
@@ -296,7 +296,7 @@ jobs:
         run: |
           set -euo pipefail
           cross build --release --target i686-unknown-linux-gnu \
-            --bin "${BIN_NAME}" --no-default-features
+            -p zen-metrics-cli --bin "${BIN_NAME}" --no-default-features
 
       - name: Stage release artifact
         id: stage
