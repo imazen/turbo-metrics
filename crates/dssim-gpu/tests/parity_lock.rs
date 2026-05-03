@@ -110,7 +110,10 @@ fn black_vs_white_is_significant() {
     let gpu = d.compute(&black, &white).unwrap().score;
     eprintln!("black-vs-white: cpu = {cpu:.6}, gpu = {gpu:.6}");
     assert!(cpu > 0.1, "cpu sanity: {cpu}");
-    assert!(gpu > 0.1, "gpu produced ~0 on a pair the CPU rates at {cpu}");
+    assert!(
+        gpu > 0.1,
+        "gpu produced ~0 on a pair the CPU rates at {cpu}"
+    );
     let rel = (gpu - cpu).abs() / cpu;
     assert!(
         rel < 0.05,
@@ -233,7 +236,10 @@ fn jpeg_corpus_q70_q90() {
         } else {
             (gpu - cpu).abs()
         };
-        eprintln!("{q}: cpu = {cpu:.6}, gpu = {gpu:.6}, rel = {:.3} %", rel * 100.0);
+        eprintln!(
+            "{q}: cpu = {cpu:.6}, gpu = {gpu:.6}, rel = {:.3} %",
+            rel * 100.0
+        );
         assert!(
             rel < 0.05,
             "{q}: gpu = {gpu:.6} differs from cpu = {cpu:.6} by {:.2} %",
