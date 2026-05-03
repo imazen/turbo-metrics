@@ -9,7 +9,12 @@ use crate::metrics::GpuRuntime;
 /// List of runtimes to try, in `auto` order, restricted to whatever the
 /// crate was compiled with. Used by both metric backends.
 pub fn auto_order() -> &'static [GpuRuntime] {
-    &[GpuRuntime::Cuda, GpuRuntime::Wgpu, GpuRuntime::Hip, GpuRuntime::Cpu]
+    &[
+        GpuRuntime::Cuda,
+        GpuRuntime::Wgpu,
+        GpuRuntime::Hip,
+        GpuRuntime::Cpu,
+    ]
 }
 
 pub fn runtime_label(rt: GpuRuntime) -> &'static str {

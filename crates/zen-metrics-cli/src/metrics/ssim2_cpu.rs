@@ -6,7 +6,10 @@
 
 use crate::decode::Rgb8Image;
 
-pub fn score(reference: &Rgb8Image, distorted: &Rgb8Image) -> Result<f64, Box<dyn std::error::Error>> {
+pub fn score(
+    reference: &Rgb8Image,
+    distorted: &Rgb8Image,
+) -> Result<f64, Box<dyn std::error::Error>> {
     let lin_ref = to_linear_rgb(reference)?;
     let lin_dst = to_linear_rgb(distorted)?;
     let s = ssimulacra2::compute_frame_ssimulacra2(lin_ref, lin_dst)

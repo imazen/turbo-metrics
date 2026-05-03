@@ -7,7 +7,10 @@
 
 use crate::decode::Rgb8Image;
 
-pub fn score(reference: &Rgb8Image, distorted: &Rgb8Image) -> Result<f64, Box<dyn std::error::Error>> {
+pub fn score(
+    reference: &Rgb8Image,
+    distorted: &Rgb8Image,
+) -> Result<f64, Box<dyn std::error::Error>> {
     use rgb::FromSlice;
 
     let w = reference.width as usize;

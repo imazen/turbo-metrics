@@ -68,7 +68,11 @@ fn sniff_format(data: &[u8], path: &Path) -> Option<ImageFormat> {
     }
 
     // Fall back to extension.
-    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase) {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+    {
         Some(ext) => match ext.as_str() {
             "png" => Some(ImageFormat::Png),
             "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
@@ -199,27 +203,62 @@ fn pixel_slice_to_rgb8(
 
     match format {
         PixelFormat::Rgb8 => Ok(Rgb8Image {
-            pixels: copy_packed(bytes, width as usize, height as usize, stride, 3, &[0, 1, 2]),
+            pixels: copy_packed(
+                bytes,
+                width as usize,
+                height as usize,
+                stride,
+                3,
+                &[0, 1, 2],
+            ),
             width,
             height,
         }),
         PixelFormat::Rgba8 => Ok(Rgb8Image {
-            pixels: copy_packed(bytes, width as usize, height as usize, stride, 4, &[0, 1, 2]),
+            pixels: copy_packed(
+                bytes,
+                width as usize,
+                height as usize,
+                stride,
+                4,
+                &[0, 1, 2],
+            ),
             width,
             height,
         }),
         PixelFormat::Rgbx8 => Ok(Rgb8Image {
-            pixels: copy_packed(bytes, width as usize, height as usize, stride, 4, &[0, 1, 2]),
+            pixels: copy_packed(
+                bytes,
+                width as usize,
+                height as usize,
+                stride,
+                4,
+                &[0, 1, 2],
+            ),
             width,
             height,
         }),
         PixelFormat::Bgra8 => Ok(Rgb8Image {
-            pixels: copy_packed(bytes, width as usize, height as usize, stride, 4, &[2, 1, 0]),
+            pixels: copy_packed(
+                bytes,
+                width as usize,
+                height as usize,
+                stride,
+                4,
+                &[2, 1, 0],
+            ),
             width,
             height,
         }),
         PixelFormat::Bgrx8 => Ok(Rgb8Image {
-            pixels: copy_packed(bytes, width as usize, height as usize, stride, 4, &[2, 1, 0]),
+            pixels: copy_packed(
+                bytes,
+                width as usize,
+                height as usize,
+                stride,
+                4,
+                &[2, 1, 0],
+            ),
             width,
             height,
         }),
@@ -266,7 +305,13 @@ fn copy_packed(
 }
 
 #[cfg(any(feature = "png", feature = "jpeg", feature = "avif", feature = "jxl"))]
-fn gray_to_rgb8(bytes: &[u8], width: usize, height: usize, stride: usize, src_bpp: usize) -> Vec<u8> {
+fn gray_to_rgb8(
+    bytes: &[u8],
+    width: usize,
+    height: usize,
+    stride: usize,
+    src_bpp: usize,
+) -> Vec<u8> {
     let mut out = vec![0u8; width * height * 3];
     for y in 0..height {
         let row = &bytes[y * stride..y * stride + width * src_bpp];
