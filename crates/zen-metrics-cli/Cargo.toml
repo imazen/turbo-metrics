@@ -1,6 +1,6 @@
 [package]
 name = "zen-metrics-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Unified CLI for decoding zen image formats and scoring perceptual quality metrics on CPU and GPU"
 authors = ["Lilith River <support@imazen.io>"]
 homepage.workspace = true
@@ -35,7 +35,6 @@ jxl = ["dep:zenjxl"]
 # CPU metric feature flags
 cpu-metrics = [
     "dep:butteraugli",
-    "dep:dssim-core",
     "dep:zensim",
     "dep:ssimulacra2",
     "dep:rgb",
@@ -76,7 +75,6 @@ enough = "0.4.4"
 
 # CPU metrics
 butteraugli = { version = "0.9.2", optional = true }
-dssim-core = { version = "3.4.0", optional = true }
 zensim = { version = "0.2.7", optional = true }
 ssimulacra2 = { version = "0.5.1", optional = true }
 rgb = { version = "0.8", optional = true }

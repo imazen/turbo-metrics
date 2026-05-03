@@ -68,13 +68,13 @@ fn score_zensim_identical_pngs() {
 
 #[cfg(feature = "cpu-metrics")]
 #[test]
-fn score_dssim_identical_pngs() {
+fn score_butteraugli_identical_pngs_tsv() {
     let dir = fixtures_dir();
     let out = cli()
         .args([
             "score",
             "--metric",
-            "dssim-cpu",
+            "butteraugli",
             "--reference",
             dir.join("ref_64.png").to_str().unwrap(),
             "--distorted",
@@ -95,10 +95,10 @@ fn score_dssim_identical_pngs() {
     assert_eq!(lines.next().unwrap(), "metric\tscore");
     let row = lines.next().unwrap();
     let parts: Vec<&str> = row.split('\t').collect();
-    assert_eq!(parts[0], "dssim-cpu");
+    assert_eq!(parts[0], "butteraugli");
     let score: f64 = parts[1].parse().unwrap();
-    // DSSIM is dissimilarity — identical images should be ~0.
-    assert!(score < 0.001, "expected ~0, got {score}");
+    // Butteraugli 3-norm of identical images should be effectively zero.
+    assert!(score < 0.01, "expected ~0, got {score}");
 }
 
 #[cfg(feature = "cpu-metrics")]
@@ -106,12 +106,12 @@ fn score_dssim_identical_pngs() {
 fn score_butteraugli_noisy_is_higher_than_identical() {
     let dir = fixtures_dir();
     let identical = run_score(
-        "butteraugli-cpu",
+        "butteraugli",
         &dir.join("ref_64.png"),
         &dir.join("dist_identical_64.png"),
     );
     let noisy = run_score(
-        "butteraugli-cpu",
+        "butteraugli",
         &dir.join("ref_64.png"),
         &dir.join("dist_noisy_64.png"),
     );
@@ -124,10 +124,10 @@ fn score_butteraugli_noisy_is_higher_than_identical() {
 
 #[cfg(feature = "cpu-metrics")]
 #[test]
-fn score_ssim2_cpu_identical_is_high() {
+fn score_ssim2_identical_is_high() {
     let dir = fixtures_dir();
     let s = run_score(
-        "ssim2-cpu",
+        "ssim2",
         &dir.join("ref_64.png"),
         &dir.join("dist_identical_64.png"),
     );
@@ -291,7 +291,7 @@ fn compare_one_ref_two_variants_two_metrics_tsv() {
             "--metric",
             "zensim",
             "--metric",
-            "dssim-cpu",
+            "butteraugli",
             "--output",
             "tsv",
         ])
@@ -305,25 +305,25 @@ fn compare_one_ref_two_variants_two_metrics_tsv() {
     let s = String::from_utf8_lossy(&out.stdout);
     let mut lines = s.lines();
     let header = lines.next().expect("header");
-    assert_eq!(header, "reference\tvariant\tzensim\tdssim-cpu");
+    assert_eq!(header, "reference\tvariant\tzensim\tbutteraugli");
     let row1: Vec<&str> = lines.next().expect("row1").split('\t').collect();
     let row2: Vec<&str> = lines.next().expect("row2").split('\t').collect();
     assert!(lines.next().is_none(), "exactly two data rows expected");
     assert_eq!(row1.len(), 4);
     assert_eq!(row2.len(), 4);
     let identical_zensim: f64 = row1[2].parse().unwrap();
-    let identical_dssim: f64 = row1[3].parse().unwrap();
+    let identical_butter: f64 = row1[3].parse().unwrap();
     let noisy_zensim: f64 = row2[2].parse().unwrap();
-    let noisy_dssim: f64 = row2[3].parse().unwrap();
+    let noisy_butter: f64 = row2[3].parse().unwrap();
     assert!(identical_zensim > 95.0, "{identical_zensim}");
-    assert!(identical_dssim < 0.001, "{identical_dssim}");
+    assert!(identical_butter < 0.01, "{identical_butter}");
     assert!(
         noisy_zensim < identical_zensim,
         "noisy {noisy_zensim} should be < identical {identical_zensim}"
     );
     assert!(
-        noisy_dssim > identical_dssim,
-        "noisy {noisy_dssim} (DSSIM, higher = worse) should be > identical {identical_dssim}"
+        noisy_butter > identical_butter,
+        "noisy {noisy_butter} (butteraugli 3-norm, higher = worse) should be > identical {identical_butter}"
     );
 }
 
@@ -372,6 +372,33 @@ fn compare_continues_on_per_cell_failure() {
         results[1]["scores"]["zensim"].is_null(),
         "expected null score for missing variant, got {}",
         results[1]["scores"]["zensim"]
+    );
+}
+
+/// CPU butteraugli (3-norm) vs GPU butteraugli (3-norm) on the same
+/// noisy-pair fixture. Both backends compute the same aggregation; the two
+/// scores should agree closely modulo floating-point order across CubeCL
+/// runtimes (CUDA vs wgpu vs HIP vs CPU). Tolerance is set to 5e-2 in
+/// absolute terms — empirically the cross-backend slack on butteraugli is
+/// dominated by reduction order, well below this bound on 64×64 fixtures.
+#[cfg(all(feature = "cpu-metrics", feature = "gpu-butteraugli"))]
+#[test]
+fn butteraugli_cpu_and_gpu_agree_on_3norm() {
+    let dir = fixtures_dir();
+    let cpu = run_score(
+        "butteraugli",
+        &dir.join("ref_64.png"),
+        &dir.join("dist_noisy_64.png"),
+    );
+    let gpu = run_score(
+        "butteraugli-gpu",
+        &dir.join("ref_64.png"),
+        &dir.join("dist_noisy_64.png"),
+    );
+    let diff = (cpu - gpu).abs();
+    assert!(
+        diff < 5e-2,
+        "cpu butteraugli={cpu} vs gpu butteraugli={gpu} (|diff|={diff}) exceeds 5e-2 tolerance"
     );
 }
 

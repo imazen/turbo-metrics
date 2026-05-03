@@ -1489,7 +1489,6 @@ checksum = "e3c601412450ff29a9258b2f85b18b38f658caf70fad1692f40ca863d86cb753"
 dependencies = [
  "imgref",
  "itertools 0.14.0",
- "rayon",
  "rgb",
 ]
 
@@ -5863,14 +5862,13 @@ dependencies = [
 
 [[package]]
 name = "zen-metrics-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "butteraugli",
  "butteraugli-gpu",
  "clap",
  "csv",
  "cubecl",
- "dssim-core",
  "enough",
  "imgref",
  "rgb",
