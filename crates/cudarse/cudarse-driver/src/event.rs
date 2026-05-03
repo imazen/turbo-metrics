@@ -2,7 +2,7 @@ use crate::stream::CuStream;
 use crate::sys;
 use std::ptr::null_mut;
 use sys::{
-    CuError, CuResult, cuEventCreate, cuEventDestroy_v2, cuEventElapsedTime_v2, cuEventQuery,
+    CuError, CuResult, cuEventCreate, cuEventDestroy_v2, cuEventElapsedTime, cuEventQuery,
     cuEventRecord, cuEventSynchronize,
 };
 
@@ -35,7 +35,7 @@ impl CuEvent {
 
     pub fn elapsed_since(&self, start: &Self) -> CuResult<f32> {
         let mut elapsed = 0.0;
-        unsafe { cuEventElapsedTime_v2(&mut elapsed, start.0, self.0).result()? }
+        unsafe { cuEventElapsedTime(&mut elapsed, start.0, self.0).result()? }
         Ok(elapsed)
     }
 

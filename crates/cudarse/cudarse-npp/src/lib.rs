@@ -9,7 +9,7 @@ pub use cudarse_npp_sys as sys;
 use cudarse_npp_sys::{cudaMemcpyAsync, cudaMemcpyKind};
 use sys::{
     NppStreamContext, Result, cudaDeviceGetAttribute, cudaFreeAsync, cudaGetDevice,
-    cudaGetDeviceProperties, cudaMallocAsync, cudaStream_t, nppGetLibVersion,
+    cudaGetDeviceProperties_v2, cudaMallocAsync, cudaStream_t, nppGetLibVersion,
 };
 
 // CUDA 13 removed NPP's old global-state queries (`nppGetGpuName`,
@@ -134,7 +134,7 @@ pub fn gpu_name() -> &'static CStr {
         let mut device: i32 = 0;
         let cstr = unsafe {
             if cudaGetDevice(&mut device).result().is_ok()
-                && cudaGetDeviceProperties(&mut props, device).result().is_ok()
+                && cudaGetDeviceProperties_v2(&mut props, device).result().is_ok()
             {
                 CStr::from_ptr(props.name.as_ptr()).to_owned()
             } else {
