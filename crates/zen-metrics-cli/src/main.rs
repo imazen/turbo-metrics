@@ -300,8 +300,8 @@ fn cmd_score(args: ScoreArgs) -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
-    let score = run_metric(args.metric, &reference, &distorted, args.gpu_runtime)?;
-    print_score(args.output, args.metric, score);
+    let scores = run_metric(args.metric, &reference, &distorted, args.gpu_runtime)?;
+    print_score(args.output, args.metric, &scores);
     Ok(())
 }
 
@@ -317,9 +317,11 @@ fn cmd_batch(args: BatchArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut wtr = csv::WriterBuilder::new()
         .delimiter(b'\t')
         .from_path(&args.output)?;
-    let metric_col = args.metric.column_name();
+    let metric_cols = args.metric.column_names();
     let mut new_headers: Vec<String> = headers.iter().map(String::from).collect();
-    new_headers.push(metric_col.to_string());
+    for col in metric_cols {
+        new_headers.push((*col).to_string());
+    }
     wtr.write_record(&new_headers)?;
 
     let _ = args.jobs; // Reserved: CPU parallelism. Currently serial; rayon
@@ -344,9 +346,11 @@ fn cmd_batch(args: BatchArgs) -> Result<(), Box<dyn std::error::Error>> {
             )
             .into());
         }
-        let score = run_metric(args.metric, &reference, &distorted, args.gpu_runtime)?;
+        let scores = run_metric(args.metric, &reference, &distorted, args.gpu_runtime)?;
         let mut row: Vec<String> = record.iter().map(String::from).collect();
-        row.push(format!("{score:.6}"));
+        for (_, value) in &scores {
+            row.push(format!("{value:.6}"));
+        }
         wtr.write_record(&row)?;
     }
     wtr.flush()?;

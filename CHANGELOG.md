@@ -2,6 +2,40 @@
 
 ## zen-metrics-cli
 
+### [0.5.0] - 2026-05-04
+
+#### Changed (BREAKING)
+- `MetricKind` no longer has the `ButteraugliMax` / `ButteraugliMaxGpu`
+  variants, and the corresponding `--metric butteraugli-max` /
+  `--metric butteraugli-max-gpu` CLI values are removed. The `butteraugli`
+  and `butteraugli-gpu` metrics now emit BOTH aggregations from a single
+  `compute()` call:
+  - `butteraugli` → columns `butteraugli_max` + `butteraugli_pnorm3`
+  - `butteraugli-gpu` → columns `butteraugli_max_gpu` + `butteraugli_pnorm3_gpu`
+  Sweeps that previously declared both `butteraugli` and `butteraugli-max`
+  to capture both aggregations now declare just `butteraugli` and pay
+  half the cost.
+- `metrics::run_metric` returns `Vec<(&'static str, f64)>` instead of
+  `f64` — one `(column_name, value)` pair per emitted column.
+- `MetricKind::column_name` (singular) is replaced by
+  `MetricKind::column_names` (plural, returns `&'static [&'static str]`)
+  so callers can iterate the columns a metric emits.
+- `score` subcommand JSON output now nests values under `scores.<column>`
+  instead of a top-level `score` field. Single-column metrics still have
+  a single key under `scores` (e.g. `scores.zensim`); butteraugli has two.
+- `score` subcommand TSV output uses column names (e.g.
+  `butteraugli_max\tbutteraugli_pnorm3`) as the header row instead of the
+  fixed `metric\tscore` shape.
+- `compare` subcommand TSV / JSON / plain output expands butteraugli into
+  its two columns, mirroring the `score` change.
+
+#### Notes
+- The `score_butteraugli` column that pre-0.5.0 sweep TSVs carried no
+  longer exists. New sweeps emit `score_butteraugli_max` and
+  `score_butteraugli_pnorm3` (or the `_gpu`-suffixed pair). Loaders that
+  hardcoded `score_butteraugli` need to switch to one of the new
+  columns — `score_butteraugli_pnorm3` matches the old number bit-for-bit.
+
 ### [0.4.0] - 2026-05-04
 
 #### Added
