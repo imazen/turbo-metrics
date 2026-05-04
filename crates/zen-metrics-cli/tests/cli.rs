@@ -536,6 +536,87 @@ fn sweep_zenwebp_emits_pareto_rows() {
 
 #[cfg(feature = "sweep")]
 #[test]
+fn sweep_writes_zensim_feature_parquet() {
+    // Run a tiny zenwebp sweep with --feature-output and verify:
+    // - the parquet file is produced
+    // - it has 305 columns (4 keys + zensim_score + 300 features)
+    // - the row count matches the TSV row count
+    // - the file is non-trivially sized (has actual feature data)
+    let dir = fixtures_dir();
+    let staged = tempfile::tempdir().expect("tmp");
+    std::fs::copy(dir.join("ref_64.png"), staged.path().join("ref.png")).unwrap();
+    let out_tsv = staged.path().join("pareto.tsv");
+    let out_pq = staged.path().join("features.parquet");
+
+    let result = cli()
+        .args([
+            "sweep",
+            "--codec",
+            "zenwebp",
+            "--sources",
+            staged.path().to_str().unwrap(),
+            "--q-grid",
+            "50,90",
+            "--metric",
+            "zensim",
+            "--output",
+            out_tsv.to_str().unwrap(),
+            "--feature-output",
+            out_pq.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        result.status.success(),
+        "sweep failed: stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let pq_meta = std::fs::metadata(&out_pq).expect("parquet exists");
+    // Parquet files have a 12-byte fixed footer minimum; a real file with
+    // 2 rows and 305 columns is going to be at least a couple of KB even
+    // after zstd. Sanity-check we didn't write an empty stub.
+    assert!(
+        pq_meta.len() > 1024,
+        "feature parquet is suspiciously small: {} bytes",
+        pq_meta.len()
+    );
+
+    // Cross-check TSV row count: 1 header + 2 cells (2 q values, default knob grid = 1 tuple).
+    let tsv_body = std::fs::read_to_string(&out_tsv).expect("read tsv");
+    assert_eq!(tsv_body.lines().count(), 3, "TSV should have 1+2 lines");
+
+    // Validate parquet footer + read column count via the parquet crate
+    // directly. We don't pull pyarrow into the test suite — the parquet
+    // crate's own ParquetMetaData reader is the same API we use to write.
+    use parquet::file::reader::FileReader;
+    let file = std::fs::File::open(&out_pq).expect("open pq");
+    let reader = parquet::file::reader::SerializedFileReader::new(file).expect("parquet reader");
+    let meta = reader.metadata();
+    assert_eq!(meta.num_row_groups(), 1, "expect single row group");
+    let schema_descr = meta.file_metadata().schema_descr();
+    // 5 ID columns + 300 features = 305
+    assert_eq!(
+        schema_descr.num_columns(),
+        305,
+        "expected 305 columns, got {}",
+        schema_descr.num_columns()
+    );
+    let num_rows = meta.file_metadata().num_rows();
+    assert_eq!(num_rows, 2, "expected 2 rows in parquet, got {num_rows}");
+
+    // First and last feature columns are named feat_0 / feat_299.
+    let names: Vec<String> = (0..schema_descr.num_columns())
+        .map(|i| schema_descr.column(i).name().to_string())
+        .collect();
+    assert_eq!(names[0], "image_path");
+    assert_eq!(names[4], "zensim_score");
+    assert_eq!(names[5], "feat_0");
+    assert_eq!(names[304], "feat_299");
+}
+
+#[cfg(feature = "sweep")]
+#[test]
 fn sweep_zenavif_emits_pareto_rows() {
     let dir = fixtures_dir();
     let staged = tempfile::tempdir().expect("tmp");

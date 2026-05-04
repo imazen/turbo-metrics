@@ -220,3 +220,27 @@ pub fn run_metric(
 fn disabled_msg(metric: &str, feature: &str) -> Box<dyn std::error::Error> {
     format!("metric '{metric}' is disabled (rebuild with `--features {feature}`)").into()
 }
+
+/// Run the zensim metric and additionally return the 300-feature extended
+/// vector that the score is derived from. Only the zensim metric exposes a
+/// feature vector — other metrics return `None` so callers can still use a
+/// uniform call site. Callers that want feature output must therefore include
+/// `MetricKind::Zensim` in their metric list.
+///
+/// Score values match what [`run_metric`] would return for `MetricKind::Zensim`,
+/// so a sweep that scores zensim today and migrates to this entry point
+/// later sees no shift in the TSV `score_zensim` column.
+#[cfg(feature = "sweep")]
+pub fn run_zensim_with_features(
+    reference: &Rgb8Image,
+    distorted: &Rgb8Image,
+) -> Result<(f64, Vec<f64>), Box<dyn std::error::Error>> {
+    #[cfg(feature = "cpu-metrics")]
+    {
+        zensim::score_with_features(reference, distorted)
+    }
+    #[cfg(not(feature = "cpu-metrics"))]
+    {
+        Err(disabled_msg("zensim", "cpu-metrics"))
+    }
+}

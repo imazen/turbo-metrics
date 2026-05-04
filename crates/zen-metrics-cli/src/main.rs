@@ -159,6 +159,13 @@ struct SweepArgs {
     /// Output Pareto TSV path.
     #[arg(long)]
     output: PathBuf,
+    /// Optional path for a per-cell zensim feature parquet sidecar. When
+    /// set, every cell that runs the `zensim` metric also persists its
+    /// 300-feature extended vector to this parquet file. Joins back to
+    /// `--output` (TSV) on `(image_path, codec, q, knob_tuple_json)`.
+    /// The metric list must include `zensim` for any rows to be written.
+    #[arg(long)]
+    feature_output: Option<PathBuf>,
     /// CubeCL runtime selector for GPU metrics.
     #[arg(long, value_enum, default_value = "auto")]
     gpu_runtime: GpuRuntime,
@@ -268,6 +275,7 @@ fn cmd_sweep(args: SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
         metrics,
         gpu_runtime: args.gpu_runtime,
         output: args.output,
+        feature_output: args.feature_output,
     };
     let stats = run_sweep(&cfg)?;
     eprintln!(

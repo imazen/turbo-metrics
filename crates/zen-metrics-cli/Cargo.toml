@@ -1,6 +1,6 @@
 [package]
 name = "zen-metrics-cli"
-version = "0.3.0"
+version = "0.4.0"
 description = "Unified CLI for decoding zen image formats and scoring perceptual quality metrics on CPU and GPU"
 authors = ["Lilith River <support@imazen.io>"]
 homepage.workspace = true
@@ -104,6 +104,13 @@ sweep = [
     "dep:imgref",
     "dep:zencodec",
     "dep:almost-enough",
+    # `--feature-output <path.parquet>` writes a per-cell sidecar of zensim's
+    # 300-feature extended vector. Pulled into the sweep feature so the dep
+    # cost is opt-in: a build without `--features sweep` doesn't ship the
+    # Apache Arrow/Parquet stack.
+    "dep:parquet",
+    "dep:arrow-array",
+    "dep:arrow-schema",
 ]
 
 [dependencies]
@@ -135,7 +142,8 @@ enough = "0.4.4"
 
 # CPU metrics
 butteraugli = { version = "0.9.2", optional = true }
-zensim = { version = "0.2.7", optional = true }
+# 0.2.8 adds `Zensim::compute_extended_features()` for sweep parquet output.
+zensim = { version = "0.2.8", optional = true }
 ssimulacra2 = { version = "0.5.1", optional = true }
 dssim-core = { workspace = true, optional = true }
 rgb = { version = "0.8", optional = true }
@@ -156,6 +164,19 @@ cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std"
 # rather than dev-only.
 tempfile = { version = "3", optional = true }
 
+# Parquet output sidecar for the `sweep` subcommand. Stores zensim's
+# 300-feature extended vector per encoded cell so future selector / MLP
+# retraining can reuse the per-cell features without re-running the full
+# Cartesian sweep (which is the dominant compute cost).
+# All three only flow in when `--features sweep` is enabled.
+parquet = { version = "58.2.0", default-features = false, features = ["arrow", "zstd"], optional = true }
+arrow-array = { version = "58.2.0", optional = true }
+arrow-schema = { version = "58.2.0", optional = true }
+
 [dev-dependencies]
 tempfile = "3"
 serde_json = { workspace = true }
+# Used by the `sweep_writes_zensim_feature_parquet` integration test to read
+# back the parquet file the CLI produced. Aligned with the `parquet` version
+# used by the sweep feature.
+parquet = { version = "58.2.0", default-features = false, features = ["arrow", "zstd"] }

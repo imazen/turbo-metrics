@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::decode::{Rgb8Image, decode_image_to_rgb8};
-use crate::metrics::{GpuRuntime, MetricKind, run_metric};
+use crate::metrics::{GpuRuntime, MetricKind, run_metric, run_zensim_with_features};
 use crate::sweep::encode::{CodecKind, encode};
+use crate::sweep::feature_writer::FeatureParquetWriter;
 use crate::sweep::grid::{KnobGrid, KnobTuple};
 
 /// Runtime parameters for a sweep invocation.
@@ -31,6 +32,16 @@ pub struct SweepConfig {
     pub metrics: Vec<MetricKind>,
     pub gpu_runtime: GpuRuntime,
     pub output: PathBuf,
+    /// When set, every cell that runs the [`MetricKind::Zensim`] metric
+    /// also persists its 300-feature extended vector to a parquet sidecar
+    /// at this path. Joins back to `output` (TSV) by
+    /// `(image_path, codec, q, knob_tuple_json)`.
+    ///
+    /// Cells that do not run zensim emit nothing to the parquet. If the
+    /// metric list does not include `MetricKind::Zensim`, the parquet file
+    /// is created but receives no rows; we don't auto-add zensim because
+    /// callers may have explicit reasons for the metric set they passed.
+    pub feature_output: Option<PathBuf>,
 }
 
 /// Drive the sweep end-to-end. The function streams TSV rows to disk as
@@ -42,6 +53,12 @@ pub fn run_sweep(cfg: &SweepConfig) -> Result<SweepStats, Box<dyn Error>> {
         .from_path(&cfg.output)?;
 
     write_header(&mut wtr, &cfg.metrics)?;
+
+    let mut feature_writer = match &cfg.feature_output {
+        Some(path) => Some(FeatureParquetWriter::create(path)?),
+        None => None,
+    };
+    let zensim_in_metrics = cfg.metrics.iter().any(|m| *m == MetricKind::Zensim);
 
     let mut stats = SweepStats {
         cells_total: cfg.sources.len() * cfg.q_grid.len() * cfg.knob_grid.cell_count(),
@@ -68,18 +85,34 @@ pub fn run_sweep(cfg: &SweepConfig) -> Result<SweepStats, Box<dyn Error>> {
 
         for &q in &cfg.q_grid {
             for tuple in cfg.knob_grid.iter_tuples() {
-                run_one_cell(cfg, &mut wtr, src_path, &source, q, &tuple, &mut stats);
+                run_one_cell(
+                    cfg,
+                    &mut wtr,
+                    feature_writer.as_mut(),
+                    zensim_in_metrics,
+                    src_path,
+                    &source,
+                    q,
+                    &tuple,
+                    &mut stats,
+                );
             }
         }
     }
 
     wtr.flush()?;
+    if let Some(fw) = feature_writer {
+        fw.finish()?;
+    }
     Ok(stats)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_one_cell(
     cfg: &SweepConfig,
     wtr: &mut csv::Writer<std::fs::File>,
+    feature_writer: Option<&mut FeatureParquetWriter>,
+    zensim_in_metrics: bool,
     src_path: &Path,
     source: &Rgb8Image,
     q: u32,
@@ -166,9 +199,29 @@ fn run_one_cell(
     }
 
     // Score every selected metric.
+    //
+    // When the user passed `--feature-output` AND the metric list includes
+    // zensim, we route the zensim call through the feature-extracting path.
+    // The numeric score is identical (extra features have zero weight), so
+    // the TSV `score_zensim` column is unchanged. The 300-feature vector is
+    // captured here and persisted to parquet at the end of the loop.
     let mut any_score_failed = false;
+    let zensim_features_wanted = feature_writer.is_some() && zensim_in_metrics;
+    let mut zensim_features: Option<(f32, Vec<f64>)> = None;
     for &metric in &cfg.metrics {
-        match run_metric(metric, source, &decoded, cfg.gpu_runtime) {
+        let result: Result<f64, Box<dyn std::error::Error>> =
+            if metric == MetricKind::Zensim && zensim_features_wanted {
+                match run_zensim_with_features(source, &decoded) {
+                    Ok((score, features)) => {
+                        zensim_features = Some((score as f32, features));
+                        Ok(score)
+                    }
+                    Err(e) => Err(e),
+                }
+            } else {
+                run_metric(metric, source, &decoded, cfg.gpu_runtime)
+            };
+        match result {
             Ok(score) => row.push(format!("{score:.6}")),
             Err(e) => {
                 eprintln!(
@@ -183,6 +236,25 @@ fn run_one_cell(
     }
     if any_score_failed {
         stats.cells_failed_score += 1;
+    }
+
+    // Persist the feature vector after the row was written-or-skipped to
+    // disk. We deliberately allow the parquet to land even when other
+    // metrics failed — the zensim value is independent.
+    if let (Some(fw), Some((zensim_score, features))) = (feature_writer, zensim_features) {
+        if let Err(e) = fw.push_row(
+            &src_path.display().to_string(),
+            cfg.codec.name(),
+            q,
+            &knob_json,
+            zensim_score,
+            &features,
+        ) {
+            eprintln!(
+                "[sweep] feature_writer push failed: {} q={q}: {e}",
+                src_path.display()
+            );
+        }
     }
 
     if let Err(e) = wtr.write_record(&row) {

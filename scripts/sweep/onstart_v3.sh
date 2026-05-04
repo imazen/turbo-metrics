@@ -6,7 +6,7 @@
 #   - jq is shipped statically by the GitHub maintainers (~5 MB)
 #   - no vulkan (we run --gpu-runtime=cpu by default)
 #
-# Boot time on a fresh ubuntu:22.04 box:
+# Boot time on a fresh ubuntu:24.04 box:
 #   v2 (with apt-get): 3-8 minutes (apt-get update is the bottleneck)
 #   v3 (static-only):  10-30 seconds
 #
@@ -98,7 +98,7 @@ if [[ ! -x /usr/local/bin/mc ]]; then
         "https://dl.min.io/client/mc/release/linux-amd64/mc"
     chmod +x /usr/local/bin/mc
 fi
-# CA certs are in the base ubuntu:22.04 image already.
+# CA certs are in the base ubuntu:24.04 image already.
 
 # R2 wrapper using s5cmd
 export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
@@ -237,6 +237,11 @@ process_chunk() {
     done
 
     local OUT_TSV="$WORKDIR/out-${chunk_id}.tsv"
+    # Side-channel parquet of zensim's 300-feature extended vectors per cell.
+    # Joins back to the TSV by (image_path, codec, q, knob_tuple_json).
+    # Captured per chunk; finalize step concatenates across workers.
+    local OUT_PARQUET="$WORKDIR/features-${chunk_id}.parquet"
+    local FEATURES_KEY="${OUT_KEY%.tsv}.features.parquet"
     local start_t; start_t=$(date +%s)
     if "$BIN" sweep \
         --codec "$codec" \
@@ -246,12 +251,16 @@ process_chunk() {
         $metrics_args \
         --gpu-runtime "$GPU_RUNTIME" \
         --output "$OUT_TSV" \
+        --feature-output "$OUT_PARQUET" \
         > "/tmp/sweep-${chunk_id}.log" 2>&1
     then
         local elapsed=$(( $(date +%s) - start_t ))
         local rows
         rows=$(($(wc -l < "$OUT_TSV") - 1))
         R2 cp "$OUT_TSV" "$OUT_KEY"
+        if [[ -f "$OUT_PARQUET" ]]; then
+            R2 cp "$OUT_PARQUET" "$FEATURES_KEY" || true
+        fi
         ( flock -x 200; echo $(( $(cat /tmp/rows_done) + rows )) > /tmp/rows_done ) 200>/tmp/rows_done.lock
         echo "[done] $chunk_id ${elapsed}s ${rows}rows"
     else
@@ -259,7 +268,7 @@ process_chunk() {
         R2 cp "/tmp/sweep-${chunk_id}.log" \
             "s3://coefficient/heartbeats/${SWEEP_RUN_ID}/errors/${chunk_id}.log" 2>/dev/null || true
     fi
-    rm -rf "$STAGE" "$OUT_TSV"
+    rm -rf "$STAGE" "$OUT_TSV" "$OUT_PARQUET"
 }
 export -f R2 process_chunk
 export BIN R2_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY

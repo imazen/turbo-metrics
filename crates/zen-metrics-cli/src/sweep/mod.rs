@@ -25,6 +25,7 @@
 //! having to re-run the sweep.
 
 pub mod encode;
+pub mod feature_writer;
 pub mod grid;
 pub mod run;
 

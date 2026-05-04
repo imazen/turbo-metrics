@@ -2,6 +2,32 @@
 
 ## zen-metrics-cli
 
+### [0.4.0] - 2026-05-04
+
+#### Added
+- `--feature-output <path.parquet>` on the `sweep` subcommand. When set,
+  every cell that runs the `zensim` metric also persists its 300-feature
+  extended vector to the parquet file at `path`. Joins back to the existing
+  TSV by `(image_path, codec, q, knob_tuple_json)`. The parquet schema is
+  `image_path:utf8, codec:utf8, q:uint32, knob_tuple_json:utf8,
+  zensim_score:float32, feat_0..feat_299:float32`. Compressed with zstd-3.
+  Buffered into 256-row Arrow batches before flushing to keep memory
+  bounded for million-cell sweeps.
+- New `parquet`, `arrow-array`, `arrow-schema` optional dependencies,
+  pulled in by the `sweep` cargo feature so non-sweep builds don't ship
+  the Arrow stack.
+- Bump `zensim` minimum to `0.2.8` for the new
+  `Zensim::compute_extended_features()` API used by the parquet writer.
+
+#### Notes
+- The numeric `score_zensim` column in the TSV is unchanged — the extra
+  72 masked features have zero weight in the trained profile, so adding
+  them changes neither the weighted distance nor the score.
+- The sweep onstart script (`scripts/sweep/onstart_v3.sh`) now uploads
+  per-chunk `features-${chunk_id}.parquet` files to R2 alongside the
+  existing TSV. Finalize / consolidate steps need to concatenate the
+  per-chunk parquets if they want a single sweep-wide file.
+
 ### [0.3.0] - 2026-05-03
 
 #### Added
