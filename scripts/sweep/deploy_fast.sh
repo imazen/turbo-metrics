@@ -44,11 +44,25 @@ set +a
 # Sanity-check that the image is reachable. Fail fast rather than launch
 # 8 boxes that all fail to pull.
 IMAGE="ghcr.io/imazen/zen-metrics-sweep:${IMAGE_TAG}"
-if ! curl -fsSL "https://ghcr.io/v2/imazen/zen-metrics-sweep/manifests/${IMAGE_TAG}" \
-    -H "Authorization: Bearer $(curl -fsSL 'https://ghcr.io/token?scope=repository:imazen/zen-metrics-sweep:pull&service=ghcr.io' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')" \
-    -o /dev/null 2>/dev/null
-then
-    echo "WARNING: cannot verify $IMAGE on GHCR. Proceeding anyway." >&2
+GHCR_AUTH=""
+if [[ -n "${GHCR_TOKEN:-}" ]]; then
+    # Authenticated check (use this when the package is private).
+    if ! curl -fsSL "https://ghcr.io/v2/imazen/zen-metrics-sweep/manifests/${IMAGE_TAG}" \
+        -u "${GHCR_USER:-imazen}:${GHCR_TOKEN}" \
+        -o /dev/null 2>/dev/null
+    then
+        echo "WARNING: cannot verify $IMAGE on GHCR with provided token." >&2
+    else
+        GHCR_AUTH="-e GHCR_TOKEN=${GHCR_TOKEN} -e GHCR_USER=${GHCR_USER:-imazen}"
+    fi
+else
+    # Anonymous check — works only when the GHCR package is public.
+    if ! curl -fsSL "https://ghcr.io/v2/imazen/zen-metrics-sweep/manifests/${IMAGE_TAG}" \
+        -o /dev/null 2>/dev/null
+    then
+        echo "WARNING: $IMAGE is private (or unreachable). Set GHCR_TOKEN to a PAT with read:packages, OR make the package public via:" >&2
+        echo "  https://github.com/orgs/imazen/packages/container/zen-metrics-sweep/settings (Change visibility -> Public)" >&2
+    fi
 fi
 
 QUERY="rentable=true verified=true reliability>0.95 cuda_max_good>=11.0 num_gpus=1 dph_total<${MAX_DPH} cpu_cores>=${MIN_CORES} cpu_ram>=${MIN_RAM_MB} disk_space>${MIN_DISK_GB} inet_down>=200 inet_up>=50"
