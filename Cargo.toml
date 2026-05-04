@@ -112,8 +112,9 @@ debug = "full"
 split-debuginfo = "packed"
 codegen-units = 1
 
-# Local override: use the in-tree zensim 0.2.8 (compute_extended_features API)
-# until the corresponding crates.io release is cut. Drop this patch the moment
+# Use the unreleased zensim 0.2.8 from the imazen/zensim main branch (commit
+# e295d7fb adds Zensim::compute_extended_features() — needed by the sweep
+# subcommand's --feature-output parquet sidecar). Drop this patch the moment
 # zensim 0.2.8 lands on crates.io and the lockfile is repinned.
 [patch.crates-io]
-zensim = { path = "../zen/zensim--feature-extended-api/zensim" }
+zensim = { git = "https://github.com/imazen/zensim", rev = "e295d7fb4098" }
