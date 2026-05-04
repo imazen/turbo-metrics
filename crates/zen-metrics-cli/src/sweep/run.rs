@@ -58,7 +58,7 @@ pub fn run_sweep(cfg: &SweepConfig) -> Result<SweepStats, Box<dyn Error>> {
         Some(path) => Some(FeatureParquetWriter::create(path)?),
         None => None,
     };
-    let zensim_in_metrics = cfg.metrics.iter().any(|m| *m == MetricKind::Zensim);
+    let zensim_in_metrics = cfg.metrics.contains(&MetricKind::Zensim);
 
     let mut stats = SweepStats {
         cells_total: cfg.sources.len() * cfg.q_grid.len() * cfg.knob_grid.cell_count(),
@@ -241,20 +241,20 @@ fn run_one_cell(
     // Persist the feature vector after the row was written-or-skipped to
     // disk. We deliberately allow the parquet to land even when other
     // metrics failed — the zensim value is independent.
-    if let (Some(fw), Some((zensim_score, features))) = (feature_writer, zensim_features) {
-        if let Err(e) = fw.push_row(
+    if let (Some(fw), Some((zensim_score, features))) = (feature_writer, zensim_features)
+        && let Err(e) = fw.push_row(
             &src_path.display().to_string(),
             cfg.codec.name(),
             q,
             &knob_json,
             zensim_score,
             &features,
-        ) {
-            eprintln!(
-                "[sweep] feature_writer push failed: {} q={q}: {e}",
-                src_path.display()
-            );
-        }
+        )
+    {
+        eprintln!(
+            "[sweep] feature_writer push failed: {} q={q}: {e}",
+            src_path.display()
+        );
     }
 
     if let Err(e) = wtr.write_record(&row) {

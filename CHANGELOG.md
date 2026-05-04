@@ -2,6 +2,32 @@
 
 ## zen-metrics-cli
 
+### [0.4.1] - 2026-05-04
+
+#### Added
+- New `features-backfill` subcommand. Re-derives the per-cell zensim
+  300-feature parquet sidecar from a sweep TSV that was produced by
+  `zen-metrics-cli` 0.3.0 (which lacked `--feature-output`). Reads the
+  TSV row-by-row, re-encodes each `(image, q, knob_tuple_json)` cell
+  through the same codec dispatch the `sweep` subcommand uses, runs
+  `zensim::compute_extended_features()`, and writes a parquet matching
+  the 0.4.0 schema. The TSV is opened read-only — it is never modified.
+  Two modes:
+  - **Local**: `--input-tsv <chunk.tsv> --output-parquet <chunk.parquet>
+    --corpus-root <dir>` — single-chunk, used by tests and ad-hoc reruns.
+  - **R2**: `--run-id <id> --codec <codec> --corpus-root <dir>` — walks
+    every chunk TSV under `s3://zentrain/<run-id>/<codec>/`, skips chunks
+    whose feature parquet is already uploaded, and uploads new parquets
+    via a staging key + server-side rename for atomicity.
+  Idempotent at both levels: pre-existing parquets are skipped, and a
+  partial run only touches the staging key, never the final destination.
+  Image paths in the TSV (which were written by the sweep worker against
+  a flattened staging dir, e.g. `dir__sub__file.png`) are resolved against
+  `--corpus-root` via an unflatten heuristic with a basename-walk
+  fallback.
+- 8 unit tests + 5 integration tests covering local mode, idempotence,
+  unflattened path resolution, and CLI argument validation.
+
 ### [0.4.0] - 2026-05-04
 
 #### Added

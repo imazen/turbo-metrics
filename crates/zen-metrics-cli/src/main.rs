@@ -27,6 +27,9 @@ mod output;
 #[cfg(feature = "sweep")]
 mod sweep;
 
+#[cfg(feature = "sweep")]
+mod backfill;
+
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -59,6 +62,13 @@ enum Command {
     /// `--features sweep`.
     #[cfg(feature = "sweep")]
     Sweep(SweepArgs),
+    /// Re-derive the per-cell zensim 300-feature parquet from an
+    /// already-completed sweep TSV. Re-encodes each row, runs the
+    /// extended-features path of zensim, and writes a parquet sidecar.
+    /// Idempotent: pre-existing parquet outputs are skipped. Never
+    /// modifies the input TSV.
+    #[cfg(feature = "sweep")]
+    FeaturesBackfill(FeaturesBackfillArgs),
     /// Print available metrics and which require a GPU.
     ListMetrics,
     /// Print supported input formats.
@@ -174,6 +184,48 @@ struct SweepArgs {
     jobs: usize,
 }
 
+#[cfg(feature = "sweep")]
+#[derive(Parser, Debug)]
+struct FeaturesBackfillArgs {
+    // ── Local mode ─────────────────────────────────────────────────────
+    /// Local-mode TSV input. Mutually exclusive with `--run-id`.
+    /// When set, exactly one chunk's worth of rows is backfilled and the
+    /// resulting parquet is written to `--output-parquet`.
+    #[arg(long, conflicts_with = "run_id")]
+    input_tsv: Option<PathBuf>,
+    /// Local-mode parquet output. Required when `--input-tsv` is set.
+    /// Idempotent: if the file already exists, the run is a no-op.
+    #[arg(long, conflicts_with = "run_id", requires = "input_tsv")]
+    output_parquet: Option<PathBuf>,
+
+    // ── R2 mode ────────────────────────────────────────────────────────
+    /// R2-mode run id. Selects the R2 prefix to scan
+    /// (`s3://zentrain/<run-id>/<codec>/`). Mutually exclusive with
+    /// `--input-tsv`.
+    #[arg(long, conflicts_with = "input_tsv")]
+    run_id: Option<String>,
+    /// Override for the R2 prefix to scan for chunk TSVs. Default:
+    /// `s3://zentrain/<run-id>/<codec>/`.
+    #[arg(long, requires = "run_id")]
+    r2_prefix: Option<String>,
+    /// Override for where to upload feature parquets. Default:
+    /// `s3://zentrain/<run-id>/<codec>/features/`.
+    #[arg(long, requires = "run_id")]
+    output_r2_prefix: Option<String>,
+
+    // ── Common ─────────────────────────────────────────────────────────
+    /// Codec selector. Required for R2 mode (selects the chunk subset).
+    /// Optional for local mode — used when the TSV's `codec` column is
+    /// missing or unrecognised.
+    #[arg(long, value_enum)]
+    codec: Option<crate::sweep::CodecKind>,
+    /// Local directory of source images. The TSV's `image_path` column
+    /// is resolved against this root via the unflatten heuristic
+    /// (`a__b__c.png` → `a/b/c.png`) with a basename walk fallback.
+    #[arg(long)]
+    corpus_root: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[allow(dead_code)]
 enum FormatLabel {
@@ -220,6 +272,14 @@ fn main() -> ExitCode {
         },
         #[cfg(feature = "sweep")]
         Command::Sweep(args) => match cmd_sweep(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        #[cfg(feature = "sweep")]
+        Command::FeaturesBackfill(args) => match cmd_features_backfill(args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("error: {e}");
@@ -286,6 +346,61 @@ fn cmd_sweep(args: SweepArgs) -> Result<(), Box<dyn std::error::Error>> {
         ef = stats.cells_failed_encode,
         df = stats.cells_failed_decode,
         sf = stats.cells_failed_score,
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sweep")]
+fn cmd_features_backfill(args: FeaturesBackfillArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::backfill::{BackfillConfig, BackfillMode, run_backfill};
+
+    let mode = match (args.input_tsv, args.run_id) {
+        (Some(input_tsv), None) => {
+            let output_parquet = args
+                .output_parquet
+                .ok_or("--output-parquet is required when --input-tsv is set")?;
+            BackfillMode::Local {
+                input_tsv,
+                output_parquet,
+            }
+        }
+        (None, Some(run_id)) => BackfillMode::R2 {
+            run_id,
+            r2_prefix: args.r2_prefix,
+            output_r2_prefix: args.output_r2_prefix,
+        },
+        (None, None) => {
+            return Err(
+                "must pass either --input-tsv (local) or --run-id (R2) to features-backfill".into(),
+            );
+        }
+        (Some(_), Some(_)) => {
+            // clap's conflicts_with should already block this — defensive.
+            return Err("--input-tsv and --run-id are mutually exclusive".into());
+        }
+    };
+
+    let cfg = BackfillConfig {
+        mode,
+        corpus_root: args.corpus_root,
+        codec: args.codec,
+    };
+    let stats = run_backfill(&cfg)?;
+    eprintln!(
+        "[backfill] done: {processed}/{total} chunks processed, \
+         {skipped} skipped, {failed} failed; \
+         rows {emitted}/{rows_total} emitted \
+         (resolve={rf} encode={ef} decode={df} score={sf})",
+        processed = stats.chunks_processed,
+        total = stats.chunks_total,
+        skipped = stats.chunks_skipped,
+        failed = stats.chunks_failed,
+        emitted = stats.rows_emitted,
+        rows_total = stats.rows_total,
+        rf = stats.rows_resolve_fail,
+        ef = stats.rows_encode_fail,
+        df = stats.rows_decode_fail,
+        sf = stats.rows_score_fail,
     );
     Ok(())
 }
