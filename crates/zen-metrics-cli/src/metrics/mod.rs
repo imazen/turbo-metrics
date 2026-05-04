@@ -48,6 +48,15 @@ pub enum MetricKind {
     /// Butteraugli (3-norm) — GPU implementation via the `butteraugli-gpu` crate.
     #[value(name = "butteraugli-gpu")]
     ButteraugliGpu,
+    /// Butteraugli (max-norm) — CPU implementation via the `butteraugli` crate.
+    /// Returns `ButteraugliResult::score`. Useful for picker training where
+    /// max-distortion sensitivity matters more than overall distortion.
+    #[value(name = "butteraugli-max")]
+    ButteraugliMax,
+    /// Butteraugli (max-norm) — GPU implementation via the `butteraugli-gpu` crate.
+    /// Returns `ButteraugliResult::score`.
+    #[value(name = "butteraugli-max-gpu")]
+    ButteraugliMaxGpu,
     /// DSSIM — CPU implementation via the `dssim-core` crate. Distance metric: 0 = identical.
     #[value(name = "dssim")]
     Dssim,
@@ -66,6 +75,8 @@ impl MetricKind {
             MetricKind::Ssim2Gpu,
             MetricKind::Butteraugli,
             MetricKind::ButteraugliGpu,
+            MetricKind::ButteraugliMax,
+            MetricKind::ButteraugliMaxGpu,
             MetricKind::Dssim,
             MetricKind::DssimGpu,
             MetricKind::Zensim,
@@ -78,6 +89,8 @@ impl MetricKind {
             MetricKind::Ssim2Gpu => "ssim2-gpu",
             MetricKind::Butteraugli => "butteraugli",
             MetricKind::ButteraugliGpu => "butteraugli-gpu",
+            MetricKind::ButteraugliMax => "butteraugli-max",
+            MetricKind::ButteraugliMaxGpu => "butteraugli-max-gpu",
             MetricKind::Dssim => "dssim",
             MetricKind::DssimGpu => "dssim-gpu",
             MetricKind::Zensim => "zensim",
@@ -86,7 +99,10 @@ impl MetricKind {
 
     pub fn backend(self) -> &'static str {
         match self {
-            MetricKind::Ssim2Gpu | MetricKind::ButteraugliGpu | MetricKind::DssimGpu => "GPU",
+            MetricKind::Ssim2Gpu
+            | MetricKind::ButteraugliGpu
+            | MetricKind::ButteraugliMaxGpu
+            | MetricKind::DssimGpu => "GPU",
             _ => "CPU",
         }
     }
@@ -94,7 +110,10 @@ impl MetricKind {
     pub fn requires_gpu(self) -> bool {
         matches!(
             self,
-            MetricKind::Ssim2Gpu | MetricKind::ButteraugliGpu | MetricKind::DssimGpu
+            MetricKind::Ssim2Gpu
+                | MetricKind::ButteraugliGpu
+                | MetricKind::ButteraugliMaxGpu
+                | MetricKind::DssimGpu
         )
     }
 
@@ -105,6 +124,8 @@ impl MetricKind {
             MetricKind::Ssim2Gpu => "ssim2_gpu",
             MetricKind::Butteraugli => "butteraugli",
             MetricKind::ButteraugliGpu => "butteraugli_gpu",
+            MetricKind::ButteraugliMax => "butteraugli_max",
+            MetricKind::ButteraugliMaxGpu => "butteraugli_max_gpu",
             MetricKind::Dssim => "dssim",
             MetricKind::DssimGpu => "dssim_gpu",
             MetricKind::Zensim => "zensim",
@@ -163,6 +184,20 @@ pub fn run_metric(
         MetricKind::ButteraugliGpu => butteraugli_gpu::score(reference, distorted, gpu_runtime),
         #[cfg(not(feature = "gpu-butteraugli"))]
         MetricKind::ButteraugliGpu => Err(disabled_msg("butteraugli-gpu", "gpu-butteraugli")),
+
+        #[cfg(feature = "cpu-metrics")]
+        MetricKind::ButteraugliMax => butteraugli::score_max(reference, distorted),
+        #[cfg(not(feature = "cpu-metrics"))]
+        MetricKind::ButteraugliMax => Err(disabled_msg("butteraugli-max", "cpu-metrics")),
+
+        #[cfg(feature = "gpu-butteraugli")]
+        MetricKind::ButteraugliMaxGpu => {
+            butteraugli_gpu::score_max(reference, distorted, gpu_runtime)
+        }
+        #[cfg(not(feature = "gpu-butteraugli"))]
+        MetricKind::ButteraugliMaxGpu => {
+            Err(disabled_msg("butteraugli-max-gpu", "gpu-butteraugli"))
+        }
 
         #[cfg(feature = "cpu-metrics")]
         MetricKind::Dssim => dssim::score(reference, distorted),

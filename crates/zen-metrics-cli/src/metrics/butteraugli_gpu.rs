@@ -17,6 +17,29 @@ pub fn score(
     distorted: &Rgb8Image,
     runtime: GpuRuntime,
 ) -> Result<f64, Box<dyn std::error::Error>> {
+    score_kind(reference, distorted, runtime, ScoreKind::Pnorm3)
+}
+
+pub fn score_max(
+    reference: &Rgb8Image,
+    distorted: &Rgb8Image,
+    runtime: GpuRuntime,
+) -> Result<f64, Box<dyn std::error::Error>> {
+    score_kind(reference, distorted, runtime, ScoreKind::Max)
+}
+
+#[derive(Clone, Copy)]
+enum ScoreKind {
+    Pnorm3,
+    Max,
+}
+
+fn score_kind(
+    reference: &Rgb8Image,
+    distorted: &Rgb8Image,
+    runtime: GpuRuntime,
+    kind: ScoreKind,
+) -> Result<f64, Box<dyn std::error::Error>> {
     let candidates: Vec<GpuRuntime> = match runtime {
         GpuRuntime::Auto => auto_order().to_vec(),
         other => vec![other],
@@ -24,15 +47,20 @@ pub fn score(
 
     let mut last_error: Option<String> = None;
     for rt in candidates {
-        match score_with_runtime(reference, distorted, rt) {
+        match score_with_runtime(reference, distorted, rt, kind) {
             Ok(value) => return Ok(value),
             Err(e) => {
                 last_error = Some(format!("{}: {e}", runtime_label(rt)));
             }
         }
     }
+    let label = match kind {
+        ScoreKind::Pnorm3 => "butteraugli-gpu",
+        ScoreKind::Max => "butteraugli-max-gpu",
+    };
     Err(format!(
-        "butteraugli-gpu: no runtime succeeded; last error: {}",
+        "{}: no runtime succeeded; last error: {}",
+        label,
         last_error.unwrap_or_else(|| "none".into())
     )
     .into())
@@ -42,12 +70,13 @@ fn score_with_runtime(
     reference: &Rgb8Image,
     distorted: &Rgb8Image,
     runtime: GpuRuntime,
+    kind: ScoreKind,
 ) -> Result<f64, Box<dyn std::error::Error>> {
     match runtime {
         GpuRuntime::Cuda => {
             #[cfg(feature = "gpu-cuda")]
             {
-                run::<cubecl::cuda::CudaRuntime>(reference, distorted)
+                run::<cubecl::cuda::CudaRuntime>(reference, distorted, kind)
             }
             #[cfg(not(feature = "gpu-cuda"))]
             {
@@ -57,7 +86,7 @@ fn score_with_runtime(
         GpuRuntime::Wgpu => {
             #[cfg(feature = "gpu-wgpu")]
             {
-                run::<cubecl::wgpu::WgpuRuntime>(reference, distorted)
+                run::<cubecl::wgpu::WgpuRuntime>(reference, distorted, kind)
             }
             #[cfg(not(feature = "gpu-wgpu"))]
             {
@@ -67,7 +96,7 @@ fn score_with_runtime(
         GpuRuntime::Hip => {
             #[cfg(feature = "gpu-hip")]
             {
-                run::<cubecl::hip::HipRuntime>(reference, distorted)
+                run::<cubecl::hip::HipRuntime>(reference, distorted, kind)
             }
             #[cfg(not(feature = "gpu-hip"))]
             {
@@ -77,7 +106,7 @@ fn score_with_runtime(
         GpuRuntime::Cpu => {
             #[cfg(feature = "gpu-cpu")]
             {
-                run::<cubecl::cpu::CpuRuntime>(reference, distorted)
+                run::<cubecl::cpu::CpuRuntime>(reference, distorted, kind)
             }
             #[cfg(not(feature = "gpu-cpu"))]
             {
@@ -91,14 +120,22 @@ fn score_with_runtime(
 fn run<R: Runtime>(
     reference: &Rgb8Image,
     distorted: &Rgb8Image,
+    kind: ScoreKind,
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let client = R::client(&Default::default());
     let mut b =
         butteraugli_gpu::Butteraugli::<R>::new_multires(client, reference.width, reference.height);
     let result = b.compute(&reference.pixels, &distorted.pixels);
-    let score = result.pnorm_3 as f64;
+    let score = match kind {
+        ScoreKind::Pnorm3 => result.pnorm_3 as f64,
+        ScoreKind::Max => result.score as f64,
+    };
     if !score.is_finite() {
-        return Err(format!("butteraugli-gpu produced non-finite pnorm_3: {score}").into());
+        let label = match kind {
+            ScoreKind::Pnorm3 => "pnorm_3",
+            ScoreKind::Max => "score (max-norm)",
+        };
+        return Err(format!("butteraugli-gpu produced non-finite {label}: {score}").into());
     }
     Ok(score)
 }
