@@ -68,7 +68,8 @@ pub fn run_compare(
             let ref_img = cache.get(&ref_key).expect("populated above");
             let var_img = cache.get(&var_key).expect("populated above");
 
-            let mut scores: Vec<Result<f64, String>> = Vec::with_capacity(metrics.len());
+            let mut scores: Vec<Result<Vec<(&'static str, f64)>, String>> =
+                Vec::with_capacity(metrics.len());
             for &metric in metrics {
                 let result = score_one(ref_img, var_img, reference, variant, metric, gpu_runtime);
                 if let Err(ref reason) = result {
@@ -104,7 +105,7 @@ fn score_one(
     var_path: &Path,
     metric: MetricKind,
     gpu_runtime: GpuRuntime,
-) -> Result<f64, String> {
+) -> Result<Vec<(&'static str, f64)>, String> {
     let r = ref_img.as_ref().map_err(|e| e.clone())?;
     let d = var_img.as_ref().map_err(|e| e.clone())?;
     if r.width != d.width || r.height != d.height {

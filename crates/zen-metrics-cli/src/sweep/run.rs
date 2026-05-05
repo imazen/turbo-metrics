@@ -137,12 +137,15 @@ fn run_one_cell(
             );
             stats.cells_failed_encode += 1;
             // Emit a row with blank score columns so downstream tooling
-            // can see the cell was attempted.
+            // can see the cell was attempted. Pad one blank per emitted
+            // metric column (butteraugli emits two).
             row.push("".to_string()); // encoded_bytes
             row.push("".to_string()); // encode_ms
             row.push("".to_string()); // decode_ms
-            for _ in &cfg.metrics {
-                row.push("".to_string());
+            for m in &cfg.metrics {
+                for _ in m.column_names() {
+                    row.push("".to_string());
+                }
             }
             let _ = wtr.write_record(&row);
             return;
@@ -167,8 +170,10 @@ fn run_one_cell(
             );
             stats.cells_failed_decode += 1;
             row.push("".to_string()); // decode_ms
-            for _ in &cfg.metrics {
-                row.push("".to_string());
+            for m in &cfg.metrics {
+                for _ in m.column_names() {
+                    row.push("".to_string());
+                }
             }
             let _ = wtr.write_record(&row);
             return;
@@ -191,8 +196,10 @@ fn run_one_cell(
             decoded.height,
         );
         stats.cells_failed_decode += 1;
-        for _ in &cfg.metrics {
-            row.push("".to_string());
+        for m in &cfg.metrics {
+            for _ in m.column_names() {
+                row.push("".to_string());
+            }
         }
         let _ = wtr.write_record(&row);
         return;
@@ -209,12 +216,12 @@ fn run_one_cell(
     let zensim_features_wanted = feature_writer.is_some() && zensim_in_metrics;
     let mut zensim_features: Option<(f32, Vec<f64>)> = None;
     for &metric in &cfg.metrics {
-        let result: Result<f64, Box<dyn std::error::Error>> =
+        let result: Result<Vec<(&'static str, f64)>, Box<dyn std::error::Error>> =
             if metric == MetricKind::Zensim && zensim_features_wanted {
                 match run_zensim_with_features(source, &decoded) {
                     Ok((score, features)) => {
                         zensim_features = Some((score as f32, features));
-                        Ok(score)
+                        Ok(vec![("zensim", score)])
                     }
                     Err(e) => Err(e),
                 }
@@ -222,14 +229,21 @@ fn run_one_cell(
                 run_metric(metric, source, &decoded, cfg.gpu_runtime)
             };
         match result {
-            Ok(score) => row.push(format!("{score:.6}")),
+            Ok(values) => {
+                for (_, v) in &values {
+                    row.push(format!("{v:.6}"));
+                }
+            }
             Err(e) => {
                 eprintln!(
                     "[sweep] metric {} failed on {} q={q}: {e}",
                     metric.name(),
                     src_path.display()
                 );
-                row.push("".to_string());
+                // One blank cell per column the metric would have emitted.
+                for _ in metric.column_names() {
+                    row.push("".to_string());
+                }
                 any_score_failed = true;
             }
         }
@@ -287,21 +301,24 @@ fn write_header(
     wtr: &mut csv::Writer<std::fs::File>,
     metrics: &[MetricKind],
 ) -> Result<(), Box<dyn Error>> {
-    let mut headers: Vec<&str> = vec![
-        "image_path",
-        "codec",
-        "q",
-        "knob_tuple_json",
-        "encoded_bytes",
-        "encode_ms",
-        "decode_ms",
+    let mut headers: Vec<String> = vec![
+        "image_path".to_string(),
+        "codec".to_string(),
+        "q".to_string(),
+        "knob_tuple_json".to_string(),
+        "encoded_bytes".to_string(),
+        "encode_ms".to_string(),
+        "decode_ms".to_string(),
     ];
-    let metric_cols: Vec<String> = metrics
-        .iter()
-        .map(|m| format!("score_{}", m.column_name()))
-        .collect();
-    for c in &metric_cols {
-        headers.push(c.as_str());
+    // Each metric expands to one column per name in `column_names()`. For
+    // most metrics that's a single column; butteraugli (CPU and GPU) emits
+    // two — `butteraugli_max{,_gpu}` + `butteraugli_pnorm3{,_gpu}`. The
+    // sweep TSV prefixes every score column with `score_` to disambiguate
+    // from later columns the harness may add (per-cell timings, etc.).
+    for m in metrics {
+        for col in m.column_names() {
+            headers.push(format!("score_{col}"));
+        }
     }
     wtr.write_record(&headers)?;
     Ok(())

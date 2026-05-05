@@ -14,15 +14,17 @@
 //! Output schema (TSV, one row per cell):
 //! ```text
 //! image_path codec q knob_tuple_json encoded_bytes encode_ms decode_ms \
-//!     score_<metric_1> score_<metric_2> ...
+//!     score_<col_1> score_<col_2> ...
 //! ```
 //!
-//! The metric column names match `MetricKind::column_name()` so existing
-//! Pareto / picker tooling already knows how to consume them. Cells that
-//! fail to encode or score are emitted with `score_*` columns blank but the
-//! `encode_ms` / `decode_ms` columns still populated where possible, so a
-//! downstream filter step can drop or quarantine partial rows without
-//! having to re-run the sweep.
+//! Metric columns come from [`crate::metrics::MetricKind::column_names`].
+//! Most metrics emit a single column; butteraugli (CPU and GPU) emits two
+//! — `butteraugli_max{,_gpu}` and `butteraugli_pnorm3{,_gpu}` — because
+//! one `compute()` call yields both aggregations. Cells that fail to encode
+//! or score are emitted with `score_*` columns blank but the `encode_ms` /
+//! `decode_ms` columns still populated where possible, so a downstream
+//! filter step can drop or quarantine partial rows without having to re-run
+//! the sweep.
 
 pub mod encode;
 pub mod feature_writer;

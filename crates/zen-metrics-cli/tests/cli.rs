@@ -66,7 +66,10 @@ fn score_zensim_identical_pngs() {
     );
     let s = String::from_utf8_lossy(&out.stdout);
     let v: serde_json::Value = serde_json::from_str(s.trim()).expect("json");
-    let score = v["score"].as_f64().expect("score");
+    // zen-metrics-cli >= 0.5.0 nests scores under `scores.<column_name>`
+    // because a single metric can emit multiple columns (butteraugli emits
+    // both `_max` and `_pnorm3`). zensim is a single-column metric.
+    let score = v["scores"]["zensim"].as_f64().expect("score");
     // zensim returns ~100 for identical images.
     assert!(score > 95.0, "expected ~100, got {score}");
 }
@@ -95,35 +98,72 @@ fn score_butteraugli_identical_pngs_tsv() {
         String::from_utf8_lossy(&out.stderr)
     );
     let s = String::from_utf8_lossy(&out.stdout);
-    // TSV: header + one data row.
+    // TSV in v0.5.0+: butteraugli emits two columns from a single
+    // compute() — `butteraugli_max` (the per-block maximum) and
+    // `butteraugli_pnorm3` (the libjxl 3-norm). The header row carries
+    // the column names; the metric name itself is no longer a column
+    // because one metric can produce several values.
     let mut lines = s.lines();
-    assert_eq!(lines.next().unwrap(), "metric\tscore");
+    assert_eq!(lines.next().unwrap(), "butteraugli_max\tbutteraugli_pnorm3");
     let row = lines.next().unwrap();
     let parts: Vec<&str> = row.split('\t').collect();
-    assert_eq!(parts[0], "butteraugli");
-    let score: f64 = parts[1].parse().unwrap();
-    // Butteraugli 3-norm of identical images should be effectively zero.
-    assert!(score < 0.01, "expected ~0, got {score}");
+    assert_eq!(parts.len(), 2);
+    let max_score: f64 = parts[0].parse().unwrap();
+    let pnorm3_score: f64 = parts[1].parse().unwrap();
+    // Both aggregations of identical images should be effectively zero.
+    assert!(max_score < 0.01, "expected ~0 max, got {max_score}");
+    assert!(
+        pnorm3_score < 0.01,
+        "expected ~0 pnorm3, got {pnorm3_score}"
+    );
 }
 
 #[cfg(feature = "cpu-metrics")]
 #[test]
 fn score_butteraugli_noisy_is_higher_than_identical() {
+    // butteraugli emits two columns. Verify the ordering on BOTH
+    // aggregations — noisy should beat identical on max-norm and on the
+    // 3-norm.
     let dir = fixtures_dir();
-    let identical = run_score(
+    let identical = run_scores(
         "butteraugli",
         &dir.join("ref_64.png"),
         &dir.join("dist_identical_64.png"),
     );
-    let noisy = run_score(
+    let noisy = run_scores(
         "butteraugli",
         &dir.join("ref_64.png"),
         &dir.join("dist_noisy_64.png"),
     );
-    assert!(identical < 0.5, "identical butteraugli={identical}");
+    let identical_max = identical
+        .iter()
+        .find(|(k, _)| k == "butteraugli_max")
+        .expect("max col")
+        .1;
+    let identical_p3 = identical
+        .iter()
+        .find(|(k, _)| k == "butteraugli_pnorm3")
+        .expect("pnorm3 col")
+        .1;
+    let noisy_max = noisy
+        .iter()
+        .find(|(k, _)| k == "butteraugli_max")
+        .expect("max col")
+        .1;
+    let noisy_p3 = noisy
+        .iter()
+        .find(|(k, _)| k == "butteraugli_pnorm3")
+        .expect("pnorm3 col")
+        .1;
+    assert!(identical_max < 0.5, "identical max={identical_max}");
+    assert!(identical_p3 < 0.5, "identical pnorm3={identical_p3}");
     assert!(
-        noisy > identical,
-        "noisy {noisy} should be > identical {identical}"
+        noisy_max > identical_max,
+        "noisy max {noisy_max} should be > identical max {identical_max}"
+    );
+    assert!(
+        noisy_p3 > identical_p3,
+        "noisy pnorm3 {noisy_p3} should be > identical pnorm3 {identical_p3}"
     );
 }
 
@@ -356,25 +396,40 @@ fn compare_one_ref_two_variants_two_metrics_tsv() {
     let s = String::from_utf8_lossy(&out.stdout);
     let mut lines = s.lines();
     let header = lines.next().expect("header");
-    assert_eq!(header, "reference\tvariant\tzensim\tbutteraugli");
+    // butteraugli emits TWO columns (max + pnorm3) so the compare TSV
+    // header has 5 columns total: reference, variant, zensim,
+    // butteraugli_max, butteraugli_pnorm3.
+    assert_eq!(
+        header,
+        "reference\tvariant\tzensim\tbutteraugli_max\tbutteraugli_pnorm3"
+    );
     let row1: Vec<&str> = lines.next().expect("row1").split('\t').collect();
     let row2: Vec<&str> = lines.next().expect("row2").split('\t').collect();
     assert!(lines.next().is_none(), "exactly two data rows expected");
-    assert_eq!(row1.len(), 4);
-    assert_eq!(row2.len(), 4);
+    assert_eq!(row1.len(), 5);
+    assert_eq!(row2.len(), 5);
     let identical_zensim: f64 = row1[2].parse().unwrap();
-    let identical_butter: f64 = row1[3].parse().unwrap();
+    let identical_butter_max: f64 = row1[3].parse().unwrap();
+    let identical_butter_p3: f64 = row1[4].parse().unwrap();
     let noisy_zensim: f64 = row2[2].parse().unwrap();
-    let noisy_butter: f64 = row2[3].parse().unwrap();
+    let noisy_butter_max: f64 = row2[3].parse().unwrap();
+    let noisy_butter_p3: f64 = row2[4].parse().unwrap();
     assert!(identical_zensim > 95.0, "{identical_zensim}");
-    assert!(identical_butter < 0.01, "{identical_butter}");
+    assert!(identical_butter_max < 0.01, "{identical_butter_max}");
+    assert!(identical_butter_p3 < 0.01, "{identical_butter_p3}");
     assert!(
         noisy_zensim < identical_zensim,
         "noisy {noisy_zensim} should be < identical {identical_zensim}"
     );
     assert!(
-        noisy_butter > identical_butter,
-        "noisy {noisy_butter} (butteraugli 3-norm, higher = worse) should be > identical {identical_butter}"
+        noisy_butter_max > identical_butter_max,
+        "noisy butteraugli_max {noisy_butter_max} (higher = worse) should be > \
+         identical {identical_butter_max}"
+    );
+    assert!(
+        noisy_butter_p3 > identical_butter_p3,
+        "noisy butteraugli_pnorm3 {noisy_butter_p3} (higher = worse) should be > \
+         identical {identical_butter_p3}"
     );
 }
 
@@ -426,35 +481,85 @@ fn compare_continues_on_per_cell_failure() {
     );
 }
 
-/// CPU butteraugli (3-norm) vs GPU butteraugli (3-norm) on the same
-/// noisy-pair fixture. Both backends compute the same aggregation; the two
-/// scores should agree closely modulo floating-point order across CubeCL
-/// runtimes (CUDA vs wgpu vs HIP vs CPU). Tolerance is set to 5e-2 in
-/// absolute terms — empirically the cross-backend slack on butteraugli is
-/// dominated by reduction order, well below this bound on 64×64 fixtures.
+/// CPU butteraugli vs GPU butteraugli on the same noisy-pair fixture.
+/// Both backends compute the same two aggregations (`_max` and
+/// `_pnorm3`); the scores should agree closely modulo floating-point
+/// reduction order across CubeCL runtimes (CUDA vs wgpu vs HIP vs CPU).
+/// Tolerance is set to 5e-2 in absolute terms — empirically the
+/// cross-backend slack on butteraugli is dominated by reduction order,
+/// well below this bound on 64×64 fixtures. We verify BOTH aggregations
+/// agree, not just the 3-norm.
 #[cfg(all(feature = "cpu-metrics", feature = "gpu-butteraugli"))]
 #[test]
-fn butteraugli_cpu_and_gpu_agree_on_3norm() {
+fn butteraugli_cpu_and_gpu_agree() {
     let dir = fixtures_dir();
-    let cpu = run_score(
+    let cpu = run_scores(
         "butteraugli",
         &dir.join("ref_64.png"),
         &dir.join("dist_noisy_64.png"),
     );
-    let gpu = run_score(
+    let gpu = run_scores(
         "butteraugli-gpu",
         &dir.join("ref_64.png"),
         &dir.join("dist_noisy_64.png"),
     );
-    let diff = (cpu - gpu).abs();
+    let cpu_max = cpu
+        .iter()
+        .find(|(k, _)| k == "butteraugli_max")
+        .expect("cpu max")
+        .1;
+    let cpu_p3 = cpu
+        .iter()
+        .find(|(k, _)| k == "butteraugli_pnorm3")
+        .expect("cpu pnorm3")
+        .1;
+    let gpu_max = gpu
+        .iter()
+        .find(|(k, _)| k == "butteraugli_max_gpu")
+        .expect("gpu max")
+        .1;
+    let gpu_p3 = gpu
+        .iter()
+        .find(|(k, _)| k == "butteraugli_pnorm3_gpu")
+        .expect("gpu pnorm3")
+        .1;
+    let diff_max = (cpu_max - gpu_max).abs();
+    let diff_p3 = (cpu_p3 - gpu_p3).abs();
     assert!(
-        diff < 5e-2,
-        "cpu butteraugli={cpu} vs gpu butteraugli={gpu} (|diff|={diff}) exceeds 5e-2 tolerance"
+        diff_max < 5e-2,
+        "cpu butteraugli_max={cpu_max} vs gpu butteraugli_max_gpu={gpu_max} \
+         (|diff|={diff_max}) exceeds 5e-2 tolerance"
+    );
+    assert!(
+        diff_p3 < 5e-2,
+        "cpu butteraugli_pnorm3={cpu_p3} vs gpu butteraugli_pnorm3_gpu={gpu_p3} \
+         (|diff|={diff_p3}) exceeds 5e-2 tolerance"
     );
 }
 
 #[cfg(feature = "cpu-metrics")]
 fn run_score(metric: &str, reference: &std::path::Path, distorted: &std::path::Path) -> f64 {
+    // Single-column convenience: pulls the metric's first reported column
+    // out of the JSON response. For metrics that emit multiple columns
+    // (butteraugli) this returns the first — `butteraugli_max`. Tests that
+    // need a different aggregation should use [`run_scores`] directly.
+    let scores = run_scores(metric, reference, distorted);
+    scores
+        .into_iter()
+        .next()
+        .map(|(_, v)| v)
+        .expect("at least one score column")
+}
+
+/// Full-fidelity score reader: returns every `(column_name, value)` pair
+/// the score subcommand wrote to JSON. Used by butteraugli tests that
+/// want to assert on both `_max` and `_pnorm3` independently.
+#[cfg(feature = "cpu-metrics")]
+fn run_scores(
+    metric: &str,
+    reference: &std::path::Path,
+    distorted: &std::path::Path,
+) -> Vec<(String, f64)> {
     let out = cli()
         .args([
             "score",
@@ -476,7 +581,13 @@ fn run_score(metric: &str, reference: &std::path::Path, distorted: &std::path::P
     );
     let s = String::from_utf8_lossy(&out.stdout);
     let v: serde_json::Value = serde_json::from_str(s.trim()).expect("json");
-    v["score"].as_f64().expect("score")
+    let scores_obj = v["scores"]
+        .as_object()
+        .expect("scores object in score JSON");
+    scores_obj
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_f64().expect("score f64")))
+        .collect()
 }
 
 // ── sweep subcommand ────────────────────────────────────────────────────
