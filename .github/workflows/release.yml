@@ -2,17 +2,18 @@ name: Release zen-metrics CLI
 
 # Tag-driven release workflow for the zen-metrics CLI binary.
 #
+# Fast path: a single linux-x86_64 job runs `cargo test` then
+# `cargo build --release`, uploads the tarball, and creates the GitHub
+# release as soon as it finishes (~5 min for a cached runner). The
+# linux-x86_64 tarball is what vast.ai workers download, so this
+# unblocks sweep launches without waiting for slow Windows / macOS
+# builds. Other platforms run in parallel and append their tarballs
+# to the same release as they finish.
+#
 # Triggers only on `zen-metrics-v*` tags so unrelated tags (or repo-wide
 # version tags like `v0.3.0` for the workspace) don't fire spurious
 # releases. Manual `workflow_dispatch` lets us smoke-test the matrix
 # without cutting a real tag.
-#
-# TODO: agent CLI dispatch will land the binary under either
-#   crates/turbo-metrics-cli/src/bin/zen-metrics.rs   (sub-bin of existing crate)
-#   crates/zen-metrics-cli/                           (new crate)
-# In both cases `cargo build --bin zen-metrics` from the workspace root
-# resolves the right target, so no path edit should be needed here.
-# If the CLI agent picks a different bin name, change BIN_NAME below.
 
 on:
   push:
@@ -37,9 +38,7 @@ defaults:
     shell: bash
 
 jobs:
-  # Resolve the version once so every matrix cell tarballs with the
-  # same name. Tag-triggered runs use github.ref_name; manual dispatch
-  # uses the input.
+  # Resolve the version once so every job tarballs with the same name.
   resolve:
     name: Resolve release tag
     runs-on: ubuntu-latest
@@ -64,23 +63,108 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved tag=$TAG version=$VERSION"
 
-  build:
-    name: Build ${{ matrix.target }}
+  # Fast path: linux-x86_64 test + build + create release. Vast.ai
+  # workers grab the linux-x86_64 tarball, so making this asset
+  # available ASAP unblocks sweeps. Other matrix builds run in
+  # parallel and append to the same release as they finish.
+  fast-linux:
+    name: Fast linux-x86_64 (test + build + release)
     needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      release_url: ${{ steps.release.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history for --generate-notes
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo registry / git
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-x86_64-unknown-linux-gnu
+          cache-targets: false
+
+      - name: Test (release profile, sweep features)
+        run: |
+          set -euo pipefail
+          cargo test --release -p zen-metrics-cli --features "gpu,gpu-wgpu,sweep,cpu-metrics"
+
+      - name: Build (release profile, sweep features)
+        run: |
+          set -euo pipefail
+          cargo build --release -p zen-metrics-cli --bin "${BIN_NAME}" --features "gpu,gpu-wgpu,sweep"
+
+      - name: Strip binary
+        run: |
+          set -euo pipefail
+          BIN="target/release/${BIN_NAME}"
+          [[ -f "$BIN" ]] && strip "$BIN" || true
+
+      - name: Stage release artifact
+        id: stage
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve.outputs.version }}"
+          STAGE_DIR="${BIN_NAME}-${VERSION}-linux-x86_64"
+          mkdir -p "dist/${STAGE_DIR}"
+          cp "target/release/${BIN_NAME}" "dist/${STAGE_DIR}/"
+          cp LICENSE-AGPL3 LICENSE-MIT README.md "dist/${STAGE_DIR}/" 2>/dev/null || true
+          cd dist
+          ARCHIVE="${STAGE_DIR}.tar.gz"
+          tar -czf "${ARCHIVE}" "${STAGE_DIR}"
+          echo "archive=dist/${ARCHIVE}" >> "$GITHUB_OUTPUT"
+          echo "Staged: dist/${ARCHIVE}"
+          ls -la
+
+      - name: Upload artifact (workflow run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-linux-x86_64
+          path: ${{ steps.stage.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create release with linux-x86_64 asset
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: ${{ needs.resolve.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## zen-metrics ${{ needs.resolve.outputs.version }}
+
+            CLI binary for the turbo-metrics image quality metric suite.
+            Pick the archive matching your OS / architecture:
+
+            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-linux-x86_64.tar.gz` — Linux x86_64 (wgpu / Vulkan) **available now**
+            - other platforms append as their builds finish
+
+            Extract and run `${{ env.BIN_NAME }} --help` to see available metrics and options.
+
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md) for release notes.
+          files: ${{ steps.stage.outputs.archive }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Other platforms — run in parallel with fast-linux. Each appends
+  # its tarball to the release as soon as it finishes. We don't gate
+  # release creation on these; vast.ai (the only consumer that needs
+  # a tarball ASAP) is unblocked the moment fast-linux finishes.
+  build-other:
+    name: Build ${{ matrix.target }}
+    needs: [resolve, fast-linux]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 — wgpu portable build. CUDA-enabled artifact is
-          # produced separately by the `linux-cuda` job below so this one
-          # stays self-contained and reproducible without the CUDA SDK.
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            features: "gpu,gpu-wgpu,sweep"
-            archive: tar.gz
-            artifact_suffix: linux-x86_64
-
           # Linux aarch64 — wgpu only. ARM runners don't ship a CUDA SDK
           # we can lean on, so this is a portable wgpu build.
           - os: ubuntu-24.04-arm
@@ -130,9 +214,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.target }}
-          # Same rationale as the per-crate CI workflows: workspace
-          # target dir is multi-GB and tar post-step times out on
-          # Windows. Registry/git caches still apply.
           cache-targets: false
 
       - name: Build zen-metrics (${{ matrix.target }})
@@ -192,19 +273,22 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Append asset to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          files: ${{ steps.stage.outputs.archive }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Optional Linux x86_64 CUDA-enabled artifact. Kept as a separate job
   # so a CUDA toolkit install failure doesn't block the portable wgpu
   # builds. Users who want CUDA download this asset; everyone else uses
   # the wgpu artifact above.
-  #
-  # TODO: agent CLI dispatch decides whether `--features cuda` (or
-  # similar) is exposed on the zen-metrics bin. If the feature name
-  # differs, update CUDA_FEATURES below. If the bin doesn't compile
-  # with CUDA at all, delete this job — `continue-on-error` already
-  # keeps it from blocking the release.
   linux-cuda:
     name: Build x86_64-linux-cuda
-    needs: resolve
+    needs: [resolve, fast-linux]
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
@@ -264,15 +348,22 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Append asset to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          files: ${{ steps.stage.outputs.archive }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # i686 build for completeness per global CLAUDE.md ("Every crate MUST
   # also test on i686-unknown-linux-gnu"). GPU code almost certainly
   # won't link on 32-bit so we build with --no-default-features and
   # mark the job as continue-on-error — it's a portability sanity
-  # check, not a shipping artifact gate. If it succeeds we still ship
-  # the binary; if not, the rest of the release proceeds.
+  # check, not a shipping artifact gate.
   linux-i686:
     name: Build i686-unknown-linux-gnu
-    needs: resolve
+    needs: [resolve, fast-linux]
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -320,57 +411,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  release:
-    name: Create GitHub release
-    needs: [resolve, build, linux-cuda, linux-i686]
-    # Don't gate on the optional jobs — release proceeds even if cuda
-    # or i686 builds failed (they're continue-on-error already, but be
-    # explicit). The `build` job is required.
-    if: always() && needs.build.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # need full history for --generate-notes
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: List staged artifacts
-        run: |
-          set -euo pipefail
-          find dist -maxdepth 3 -type f | sort
-
-      - name: Create release and upload assets
+      - name: Append asset to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
-          name: ${{ needs.resolve.outputs.tag }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          body: |
-            ## zen-metrics ${{ needs.resolve.outputs.version }}
-
-            CLI binary for the turbo-metrics image quality metric suite.
-            Pick the archive matching your OS / architecture:
-
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-linux-x86_64.tar.gz` — Linux x86_64 (wgpu / Vulkan)
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-linux-x86_64-cuda.tar.gz` — Linux x86_64 with CUDA support
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-linux-aarch64.tar.gz` — Linux ARM64 (wgpu)
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-linux-i686.tar.gz` — Linux 32-bit (CPU only, if available)
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-windows-x86_64.zip` — Windows x64 (DX12)
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-windows-aarch64.zip` — Windows ARM64
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-macos-aarch64.tar.gz` — macOS Apple Silicon (Metal)
-            - `${{ env.BIN_NAME }}-${{ needs.resolve.outputs.version }}-macos-x86_64.tar.gz` — macOS Intel (Metal)
-
-            Extract and run `${{ env.BIN_NAME }} --help` to see available metrics and options.
-
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md) for release notes.
-          files: |
-            dist/**/*.tar.gz
-            dist/**/*.zip
+          files: ${{ steps.stage.outputs.archive }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
