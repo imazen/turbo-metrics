@@ -2,6 +2,37 @@
 
 ## zen-metrics-cli
 
+### [0.6.0] - 2026-05-04
+
+#### Added
+- Sweep subcommand exposes JXL expert knobs that the `zenjxl` wrapper does
+  not surface, by routing through `jxl-encoder` directly when any expert
+  knob appears in the grid (f43811b):
+  - `butteraugli_iters`, `zensim_iters`, `ssim2_iters` — iterative
+    metric-targeted refinement (gated by the corresponding
+    `jxl-encoder` loop features which are now pulled in by default).
+  - `pixel_domain_loss`, `patches`, `gaborish`, `error_diffusion`,
+    `denoise` — perceptual / pixel-domain controls.
+  - `lf_frame`, `lz77`, `progressive` (`single` | `two-pass` |
+    `three-pass`) — entropy / progressive coding.
+  - `force_strategy`, `max_strategy_size` — DCT block strategy override.
+  - Cells that don't use any expert knob still go through the
+    `zenjxl` wrapper unchanged. Lossless encode is wrapper-only.
+- `scripts/sweep/generate_jobspecs_v06.py` — v0.6 JXL grid expanding
+  effort × distance × `butteraugli_iters` (4 × 19 × 3 = 228 cells/image),
+  with `butteraugli` + `ssim2_gpu` added to the metric set so picker
+  training can A/B "wrong target metric" hypotheses (f43811b).
+
+#### Why
+- `effort=N` in `jxl-encoder` is a macro bundle (butteraugli iters,
+  adaptive quant, DCT16/32/64, LZ77 method, fine-grained step,
+  initial_q). Sweeping just `effort` + `distance` (v05c) means the
+  picker can never pick e.g. "effort=5 DCT search + 2 butteraugli iters
+  + no LZ77" — those points aren't in the data. Local validation found
+  `(effort=5, butteraugli_iters=2)` beats `(effort=9, default biters=4)`
+  on bytes (-0.94%), zensim (+0.08pp), AND speed (1.65x faster) on a
+  single image at distance=1.0.
+
 ### [0.5.0] - 2026-05-04
 
 #### Changed (BREAKING)
