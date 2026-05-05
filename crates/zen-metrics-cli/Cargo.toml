@@ -104,6 +104,14 @@ sweep = [
     "dep:imgref",
     "dep:zencodec",
     "dep:almost-enough",
+    # Direct jxl-encoder dep (in addition to zenjxl wrapper) so the JXL
+    # sweep path can configure expert LossyConfig knobs the wrapper
+    # doesn't expose: with_butteraugli_iters, with_zensim_iters,
+    # with_ssim2_iters, with_pixel_domain_loss, with_patches,
+    # with_gaborish, with_force_strategy, with_progressive,
+    # with_error_diffusion, with_lf_frame, with_denoise. Same version
+    # zenjxl 0.2.1 pins (0.3.1) so no duplicate compilation.
+    "dep:jxl-encoder",
     # `--feature-output <path.parquet>` writes a per-cell sidecar of zensim's
     # 300-feature extended vector. Pulled into the sweep feature so the dep
     # cost is opt-in: a build without `--features sweep` doesn't ship the
@@ -127,6 +135,20 @@ zenjpeg = { version = "0.8.3", optional = true }
 zenwebp = { version = "0.4.5", optional = true }
 zenavif = { version = "0.1.7", optional = true }
 zenjxl = { version = "0.2.1", optional = true }
+
+# Direct jxl-encoder dep with the loop features that the zenjxl wrapper does
+# not surface. Same version zenjxl 0.2.1 pins so no duplicate build. Used
+# only by the `sweep` JXL path when expert knobs are present in the grid.
+jxl-encoder = { version = "0.3.1", optional = true, default-features = false, features = [
+    "std",
+    "parallel",
+    "butteraugli-loop",
+    "ssim2-loop",
+    "zensim-loop",
+    "rate-control",
+    "__expert",
+    "convenience",
+] }
 
 # Pulled in by the `sweep` feature. zencodec exposes the EncodeJob /
 # Encoder traits that drive zenjxl encoding; almost_enough is the

@@ -25,8 +25,15 @@
 //! ## zenjxl 0.2.1 (`__expert` enabled, but `JxlEncoderConfig` does not
 //! currently expose `with_internal_params` for the lossy path — internal
 //! knobs live on `jxl_encoder::LossyConfig` and are not reachable from
-//! the wrapper). For now the sweep only varies the public knobs:
-//! `effort` (1..=10), `lossless`, `noise`.
+//! the wrapper). The wrapper handles: `effort` (1..=10), `lossless`,
+//! `noise`, `distance`. For lossy, the sweep also drops down to
+//! `jxl_encoder::LossyConfig` directly when any expert knob is present:
+//! `butteraugli_iters`, `zensim_iters`, `ssim2_iters`, `pixel_domain_loss`,
+//! `patches`, `gaborish`, `error_diffusion`, `denoise`, `lf_frame`,
+//! `force_strategy` (u8 or null), `progressive` ("off"/"dc-only"/"two-pass").
+//! These bypass the macro-knob `effort` bundling so the picker can compose
+//! independent decisions (e.g. effort=5 DCT search + 2 butteraugli iters
+//! without LZ77).
 //!
 //! Adding a codec or knob is a local change to this file: extend the
 //! match arms, document it in the module header, and add a test under
@@ -254,20 +261,56 @@ fn encode_avif(
 
 // ── zenjxl ──────────────────────────────────────────────────────────────
 
+/// Expert lossy knobs that, if any are present, route encode through
+/// `jxl_encoder::LossyConfig` directly instead of the zenjxl wrapper.
+#[cfg(all(feature = "sweep", feature = "jxl"))]
+const JXL_EXPERT_KNOBS: &[&str] = &[
+    "butteraugli_iters",
+    "zensim_iters",
+    "ssim2_iters",
+    "pixel_domain_loss",
+    "patches",
+    "gaborish",
+    "error_diffusion",
+    "denoise",
+    "lf_frame",
+    "force_strategy",
+    "max_strategy_size",
+    "progressive",
+    "lz77",
+];
+
 #[cfg(all(feature = "sweep", feature = "jxl"))]
 fn encode_jxl(
     source: &Rgb8Image,
     q: u32,
     knobs: &Map<String, Value>,
 ) -> Result<EncodedCell, Box<dyn Error>> {
-    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-    use zenjxl::JxlEncoderConfig;
-    use zenpixels::{PixelDescriptor, PixelSlice};
-
     let lossless = knobs
         .get("lossless")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+
+    // Expert lossy path: any of the new knobs trigger a direct LossyConfig
+    // build that bypasses the wrapper's effort macro-knob. Lossless stays
+    // on the wrapper; the new knobs don't apply to modular mode.
+    if !lossless && knobs.keys().any(|k| JXL_EXPERT_KNOBS.contains(&k.as_str())) {
+        return encode_jxl_expert(source, q, knobs);
+    }
+
+    encode_jxl_wrapper(source, q, knobs, lossless)
+}
+
+#[cfg(all(feature = "sweep", feature = "jxl"))]
+fn encode_jxl_wrapper(
+    source: &Rgb8Image,
+    q: u32,
+    knobs: &Map<String, Value>,
+    lossless: bool,
+) -> Result<EncodedCell, Box<dyn Error>> {
+    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+    use zenjxl::JxlEncoderConfig;
+    use zenpixels::{PixelDescriptor, PixelSlice};
 
     let mut cfg = if lossless {
         JxlEncoderConfig::new().with_lossless(true)
@@ -285,8 +328,6 @@ fn encode_jxl(
         cfg = cfg.with_generic_effort(e.clamp(1, 10) as i32);
     }
 
-    // Wrap the RGB8 buffer as a PixelSlice. We pass a tight stride
-    // (width * 3 bytes), which avoids any copy.
     let stride = (source.width as usize) * 3;
     let slice = PixelSlice::new(
         &source.pixels,
@@ -311,6 +352,122 @@ fn encode_jxl(
         bytes: output.into_vec(),
         encode_ms,
     })
+}
+
+/// Direct `LossyConfig` path for expert knobs the wrapper doesn't expose.
+/// Decouples the macro-knob `effort` from independent decisions like
+/// `butteraugli_iters`, `pixel_domain_loss`, `patches`, etc.
+#[cfg(all(feature = "sweep", feature = "jxl"))]
+fn encode_jxl_expert(
+    source: &Rgb8Image,
+    q: u32,
+    knobs: &Map<String, Value>,
+) -> Result<EncodedCell, Box<dyn Error>> {
+    use jxl_encoder::{LossyConfig, PixelLayout, ProgressiveMode};
+
+    // Resolve distance: explicit `distance` knob wins, else fall back to
+    // the generic q→distance mapping zenjxl uses.
+    let distance = if let Some(d) = knobs.get("distance").and_then(Value::as_f64) {
+        d as f32
+    } else {
+        jxl_encoder::quality_to_distance(jxl_encoder::calibrated_jxl_quality(q as f32))
+    };
+
+    let mut cfg = LossyConfig::new(distance);
+
+    if let Some(e) = knobs.get("effort").and_then(Value::as_u64) {
+        cfg = cfg.with_effort(e.clamp(1, 10) as u8);
+    }
+    if let Some(b) = knobs.get("noise").and_then(Value::as_bool) {
+        cfg = cfg.with_noise(b);
+    }
+    if let Some(b) = knobs.get("denoise").and_then(Value::as_bool) {
+        cfg = cfg.with_denoise(b);
+    }
+    if let Some(b) = knobs.get("gaborish").and_then(Value::as_bool) {
+        cfg = cfg.with_gaborish(b);
+    }
+    if let Some(b) = knobs.get("patches").and_then(Value::as_bool) {
+        cfg = cfg.with_patches(b);
+    }
+    if let Some(b) = knobs.get("pixel_domain_loss").and_then(Value::as_bool) {
+        cfg = cfg.with_pixel_domain_loss(b);
+    }
+    if let Some(b) = knobs.get("error_diffusion").and_then(Value::as_bool) {
+        cfg = cfg.with_error_diffusion(b);
+    }
+    if let Some(b) = knobs.get("lf_frame").and_then(Value::as_bool) {
+        cfg = cfg.with_lf_frame(b);
+    }
+    if let Some(b) = knobs.get("lz77").and_then(Value::as_bool) {
+        cfg = cfg.with_lz77(b);
+    }
+    if let Some(n) = knobs.get("butteraugli_iters").and_then(Value::as_u64) {
+        cfg = cfg.with_butteraugli_iters(n.min(16) as u32);
+    }
+    if let Some(n) = knobs.get("zensim_iters").and_then(Value::as_u64) {
+        cfg = cfg.with_zensim_iters(n.min(16) as u32);
+    }
+    if let Some(n) = knobs.get("ssim2_iters").and_then(Value::as_u64) {
+        cfg = cfg.with_ssim2_iters(n.min(16) as u32);
+    }
+    // `force_strategy` accepts null (unset) or u8 in 0..=18 (DCT strategy id).
+    if let Some(v) = knobs.get("force_strategy") {
+        match v {
+            Value::Null => cfg = cfg.with_force_strategy(None),
+            Value::Number(n) => {
+                if let Some(s) = n.as_u64() {
+                    cfg = cfg.with_force_strategy(Some(s.min(18) as u8));
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(v) = knobs.get("max_strategy_size") {
+        match v {
+            Value::Null => cfg = cfg.with_max_strategy_size(None),
+            Value::Number(n) => {
+                if let Some(s) = n.as_u64() {
+                    cfg = cfg.with_max_strategy_size(Some(s.min(255) as u8));
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = knobs.get("progressive").and_then(Value::as_str) {
+        let mode = match s {
+            "off" | "single" => ProgressiveMode::Single,
+            "two-pass" | "two_pass" | "twopass" | "qac-fac" => ProgressiveMode::QuantizedAcFullAc,
+            "three-pass" | "three_pass" | "threepass" | "dc-vlf-lf-ac" => {
+                ProgressiveMode::DcVlfLfAc
+            }
+            other => {
+                return Err(format!(
+                    "zenjxl: unknown progressive mode '{other}' (want single|two-pass|three-pass)"
+                )
+                .into());
+            }
+        };
+        cfg = cfg.with_progressive(mode);
+    }
+
+    let stride = (source.width as usize) * 3;
+    if source.pixels.len() < stride * source.height as usize {
+        return Err("zenjxl expert: pixel buffer shorter than width*height*3".into());
+    }
+
+    let start = Instant::now();
+    let bytes = cfg
+        .encode(
+            &source.pixels,
+            source.width,
+            source.height,
+            PixelLayout::Rgb8,
+        )
+        .map_err(|e| format!("zenjxl expert encode failed: {e}"))?;
+    let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    Ok(EncodedCell { bytes, encode_ms })
 }
 
 #[cfg(not(all(feature = "sweep", feature = "jxl")))]
